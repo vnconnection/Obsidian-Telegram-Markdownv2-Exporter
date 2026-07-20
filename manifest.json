@@ -1,0 +1,9 @@
+{
+	"id": "telegram-markdownv2-exporter",
+	"name": "Telegram MarkdownV2 Exporter",
+	"version": "0.1.0",
+	"minAppVersion": "1.5.0",
+	"description": "Copy the current Markdown note to the clipboard as Telegram MarkdownV2.",
+	"author": "ssfxate",
+	"isDesktopOnly": false
+}

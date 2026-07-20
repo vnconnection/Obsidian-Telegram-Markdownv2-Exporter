@@ -1,0 +1,5 @@
+# Единые окончания строк на macOS, Linux и Windows
+* text=auto eol=lf
+
+# Собранный Obsidian plugin bundle
+main.js linguist-generated=true

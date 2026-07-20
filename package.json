@@ -1,0 +1,23 @@
+{
+  "name": "telegram-markdownv2-exporter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Copy the current Obsidian note to the clipboard as Telegram MarkdownV2.",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && npm run build",
+    "preversion": "npm run check",
+    "version": "node version-bump.mjs",
+    "release": "node release.mjs",
+    "release:patch": "npm version patch && node release.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}
