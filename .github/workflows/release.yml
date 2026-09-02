@@ -53,8 +53,24 @@ jobs:
       - name: Test release contract
         run: node --test release.test.mjs
 
+      - name: Verify tracked bundle before build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files --error-unmatch -- main.js >/dev/null
+          git diff --exit-code --no-ext-diff HEAD -- main.js
+          test -s main.js
+
       - name: Production build
         run: npm run build
+
+      - name: Verify tracked bundle after build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files --error-unmatch -- main.js >/dev/null
+          git diff --exit-code --no-ext-diff HEAD -- main.js
+          test -s main.js
 
       - name: Validate release assets and metadata
         run: npm run release:validate -- "$GITHUB_REF_NAME"

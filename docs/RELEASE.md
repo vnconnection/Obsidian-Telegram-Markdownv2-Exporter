@@ -67,16 +67,34 @@ The file name and `Release X.Y.Z` heading must match the tag. The GitHub
 Release body must use this authored notes file; generated notes or a generic
 body such as `update` are not sufficient.
 
+The note grammar is exact: `Date`, `Impact`, and `Rationale` are single-line
+fields in that order, with `Impact` set to `major`, `minor`, or `patch`.
+There must be exactly one blank line after the preamble and after every `##`
+heading, and exactly one blank line between sections. Headings are unique and
+must use this order: `Summary`, `User-visible changes`, `Added`, `Changed`,
+`Fixed`, `Breaking changes`, `Migration`, `Documentation`; omit sections that
+do not apply. `Summary` and `User-visible changes` are always required, while
+`Breaking changes` and `Migration` are also required for a major release.
+
 ## Local commands
 
 From a clean branch, inspect the advisory impact and prepare metadata locally:
 
 ```bash
 npm run release:classify
+# Override Git history with JSON or one raw commit message.
+npm run release:classify -- --input '[{"header":"fix: escape a delimiter"}]'
 npm run release:patch
 # or: npm run release:minor
 # or: npm run release:major
 ```
+
+With no `--input`, `release:classify` classifies commits since the latest
+version tag (or `HEAD` when no tag exists). `--input` accepts JSON for one
+message, an array of messages, or an object containing `messages`, `commits`,
+or `commitMessages`; invalid JSON is treated as one raw message. Empty or
+malformed structured input, or any unknown message among known messages,
+returns `unknown` because ambiguity takes precedence over a version bump.
 
 `release:prepare` requires an explicit impact and updates version metadata only;
 it does not commit, create a tag, push, create a GitHub Release, or upload

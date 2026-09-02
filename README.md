@@ -37,11 +37,19 @@ The local release flow is:
 
 ```bash
 npm run release:classify
+# Supply commit messages directly as JSON or as one raw message.
+npm run release:classify -- --input '[{"header":"fix: escape a delimiter"}]'
 npm run release:patch
 # or npm run release:minor / npm run release:major
 npm run release:validate -- <X.Y.Z>
 npm run release:package -- <X.Y.Z> artifacts/telegram-markdownv2-exporter-<X.Y.Z>.zip
 ```
+
+`release:classify` reads Git history when no input is supplied. `--input`
+overrides history; valid JSON may be a message, an array, or an object with a
+`messages`, `commits`, or `commitMessages` array. Non-JSON input is treated as
+one raw commit message. Empty or malformed structured input, and any unknown
+message mixed with known messages, classify as `unknown`.
 
 Preparation updates local version metadata only. It does not commit, create a
 tag, push, create a GitHub Release, or upload assets. Before creating a bare
@@ -50,8 +58,11 @@ run the validation commands documented in [docs/RELEASE.md](docs/RELEASE.md).
 GitHub Actions then publishes the authored notes body plus `main.js`,
 `manifest.json`, and the root-layout ZIP after the tag is pushed.
 Authored notes must use exact `Date`, `Impact`, and `Rationale` fields plus
-non-empty `Summary` and `User-visible changes` sections; major releases
-additionally require `Breaking changes` and `Migration` sections.
+non-empty `Summary` and `User-visible changes` sections. The `##` headings
+must be canonical, unique, and ordered as documented; use exactly one blank
+line after the preamble and after each section heading, with one blank line
+between sections. Major releases additionally require `Breaking changes` and
+`Migration` sections.
 
 ## Format references
 

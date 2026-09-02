@@ -108,9 +108,11 @@ function releaseNotes(rootDirectory, version) {
   }
   const sections = new Map();
   const sectionHeadings = [...notes.matchAll(/^##[^\r\n]*$/gm)];
+  const newline = notes.includes("\r\n") ? "\r\n" : "\n";
+  const blankLine = `${newline}${newline}`;
   const preambleEnd = preamble.index + preamble[0].length;
   const firstSectionIndex = sectionHeadings[0]?.index ?? notes.length;
-  if (notes.slice(preambleEnd, firstSectionIndex) !== (notes.includes("\r\n") ? "\r\n" : "\n")) {
+  if (notes.slice(preambleEnd, firstSectionIndex) !== newline) {
     throw new Error(`Release notes must use the canonical blank line before sections: ${notesPath}`);
   }
   let previousSectionIndex = -1;
@@ -130,10 +132,16 @@ function releaseNotes(rootDirectory, version) {
     }
     const contentStart = heading.index + heading[0].length;
     const contentEnd = sectionHeadings[index + 1]?.index ?? notes.length;
-    if (!/^\r?\n\r?\n/.test(notes.slice(contentStart))) {
-      throw new Error(`Release notes section ## ${title} must be followed by a blank line: ${notesPath}`);
+    const sectionBody = notes.slice(contentStart, contentEnd);
+    const contentWithSeparator = sectionBody.slice(blankLine.length);
+    const hasCanonicalStart = sectionBody.startsWith(blankLine) && !contentWithSeparator.startsWith(newline);
+    const hasCanonicalSeparator = index === sectionHeadings.length - 1 || (
+      contentWithSeparator.endsWith(blankLine) && !contentWithSeparator.endsWith(`${blankLine}${newline}`)
+    );
+    if (!hasCanonicalStart || !hasCanonicalSeparator) {
+      throw new Error(`Release notes section ## ${title} must use exactly one canonical blank line before content and between sections: ${notesPath}`);
     }
-    const content = notes.slice(contentStart, contentEnd).trim();
+    const content = contentWithSeparator.trim();
     assertConcreteAuthoredNote(content, `## ${title}`, notesPath);
     sections.set(title, content);
   }
@@ -397,7 +405,11 @@ function cliArgs(args) {
     if (args[index] === "--") continue;
     if (args[index] === "--impact") impact = args[++index];
     else if (args[index].startsWith("--impact=")) impact = args[index].slice(9);
-    else if (args[index] === "--input") suppliedInput = args[++index];
+    else if (args[index] === "--input") {
+      if (index + 1 >= args.length) throw new Error("--input requires a value");
+      suppliedInput = args[++index];
+    }
+    else if (args[index].startsWith("--input=")) suppliedInput = args[index].slice(8);
     else if (args[index].startsWith("--")) throw new Error(`Unknown release option: ${args[index]}`);
     else positional.push(args[index]);
   }

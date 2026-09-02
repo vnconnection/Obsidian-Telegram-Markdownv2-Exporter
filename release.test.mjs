@@ -117,6 +117,17 @@ describe("release impact classification", () => {
     assert.equal(classifyImpact(["fix: bug", "feat: option"]), "minor");
   });
 
+  it("gives unknown precedence over every known impact", () => {
+    for (const knownMessage of [
+      "docs: clarify usage",
+      "fix: correct escaping",
+      "feat: add an option",
+      "fix!: change the public contract",
+    ]) {
+      assert.equal(classifyImpact([knownMessage, "not a conventional commit"]), "unknown");
+    }
+  });
+
   it("recognizes both breaking footer spellings after a blank line", () => {
     for (const footer of ["BREAKING CHANGE: migrate the setting", "BREAKING-CHANGE: migrate the setting"]) {
       assert.equal(classifyImpact([`fix: change behavior\n\n${footer}`]), "major");
@@ -145,8 +156,13 @@ describe("release impact classification", () => {
       assert.equal(runCli(["classify", JSON.stringify({
         messages: [{ type: "fix", subject: "change behavior", footer: "BREAKING CHANGE: migrate the setting" }],
       })]), "major");
+      assert.equal(runCli(["classify", "--input", JSON.stringify([
+        { type: "fix", subject: "change behavior", footer: "BREAKING CHANGE: migrate the setting" },
+      ])]), "major");
+      assert.equal(runCli(["classify", `--input=${JSON.stringify(["feat: add an option"])}`]), "minor");
       assert.equal(runCli(["classify", ""]), "unknown");
       assert.equal(runCli(["classify", "feat: add an option", "not a conventional commit"]), "unknown");
+      assert.throws(() => runCli(["classify", "--input"]), /--input requires a value/);
     } finally {
       console.log = originalLog;
     }
@@ -158,6 +174,20 @@ describe("release impact classification", () => {
     assert.equal(classifyImpact([]), "unknown");
     assert.equal(classifyImpact(""), "unknown");
     assert.equal(classifyImpact(null), "unknown");
+  });
+
+  it("returns unknown for empty structured commit inputs", () => {
+    for (const input of [
+      {},
+      { messages: [] },
+      { messages: [{}] },
+      { messages: [{ message: "" }] },
+      { messages: [{ header: [] }] },
+      { commits: {} },
+      { commitMessages: [null] },
+    ]) {
+      assert.equal(classifyImpact(input), "unknown");
+    }
   });
 
   it("classifies structured commit inputs with the same rules as text commits", () => {
@@ -182,12 +212,24 @@ describe("release impact classification", () => {
     ] }), "unknown");
   });
 
-  it("maps impact to the next version", () => {
-    assert.equal(computeNextVersion("0.1.0", "patch"), "0.1.1");
-    assert.equal(computeNextVersion("0.1.0", "minor"), "0.2.0");
-    assert.equal(computeNextVersion("0.1.0", "major"), "1.0.0");
-    assert.equal(computeNextVersion("0.9.4", "major"), "1.0.0");
-    assert.equal(computeNextVersion("1.2.3", "major"), "2.0.0");
+  it("maps supported impacts across semver boundaries", () => {
+    for (const [currentVersion, impact, expectedVersion] of [
+      ["0.0.0", "patch", "0.0.1"],
+      ["0.1.0", "minor", "0.2.0"],
+      ["0.9.9", "patch", "0.9.10"],
+      ["0.9.4", "major", "1.0.0"],
+      ["1.2.3", "minor", "1.3.0"],
+      ["1.2.3", "major", "2.0.0"],
+    ]) {
+      assert.equal(computeNextVersion(currentVersion, impact), expectedVersion);
+    }
+  });
+
+  it("rejects non-canonical versions and unsupported impacts", () => {
+    for (const version of ["1.2", "01.2.3", "1.02.3", "1.2.03", "v1.2.3"]) {
+      assert.throws(() => computeNextVersion(version, "patch"), /exact bare X\.Y\.Z semver/);
+    }
+    assert.throws(() => computeNextVersion("1.2.3", "none"), /Impact must be patch, minor, or major/);
   });
 });
 
@@ -258,6 +300,19 @@ describe("release notes and metadata", () => {
       "## Summary\nA concrete summary.\n\n## User-visible changes\n\nA concrete change.",
     ]) {
       assert.throws(() => validateRelease({ rootDirectory: createFixture({ releaseNotes: note(sections) }) }), /canonical|unknown section|blank line/);
+    }
+  });
+
+  it("requires exactly one blank line around each canonical section", () => {
+    const note = (sections) => `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch\nRationale: A concrete release reason.\n\n${sections}\n`;
+    for (const sections of [
+      "## Summary\n\n\nA concrete summary.\n\n## User-visible changes\n\nA concrete change.",
+      "## Summary\n\nA concrete summary.\n\n\n## User-visible changes\n\nA concrete change.",
+    ]) {
+      assert.throws(
+        () => validateRelease({ rootDirectory: createFixture({ releaseNotes: note(sections) }) }),
+        /canonical blank line/,
+      );
     }
   });
 
@@ -343,6 +398,8 @@ describe("GitHub Actions release workflow", () => {
     assert.match(workflow, /npm test/);
     assert.match(workflow, /node --test release\.test\.mjs/);
     assert.match(workflow, /npm run build/);
+    assert.match(workflow, /Verify tracked bundle before build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
+    assert.match(workflow, /Verify tracked bundle after build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
     assert.match(workflow, /npm run release:validate -- \"\$GITHUB_REF_NAME\"/);
     assert.match(workflow, /--notes-file \"\$RELEASE_NOTES_PATH\"/);
     assert.doesNotMatch(workflow, /--generate-notes/);
