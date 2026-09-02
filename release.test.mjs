@@ -211,6 +211,14 @@ describe("release impact classification", () => {
     }
   });
 
+  it("aggregates all valid wrapper arrays so later major impacts cannot be hidden", () => {
+    assert.equal(classifyImpact({
+      commitMessages: ["fix: bug"],
+      messages: ["feat: option"],
+      commits: ["fix!: breaking behavior"],
+    }), "major");
+  });
+
   it("classifies structured commit inputs with the same rules as text commits", () => {
     assert.equal(classifyImpact({
       commitMessages: [

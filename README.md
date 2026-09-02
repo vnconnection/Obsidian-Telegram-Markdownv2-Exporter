@@ -49,9 +49,11 @@ npm run release:package -- <X.Y.Z> artifacts/telegram-markdownv2-exporter-<X.Y.Z
 overrides history; valid JSON may be a message, an array, or an object with a
 `messages`, `commits`, or `commitMessages` array. When multiple wrapper fields
 are present, every one must be an array; a string or another value in any
-wrapper field is malformed structured input. Non-JSON input is treated as one
-raw commit message. Empty or malformed structured input, and any unknown
-message mixed with known messages, classify as `unknown`.
+wrapper field is malformed structured input. All present arrays are aggregated
+in `commitMessages`, `messages`, `commits` order, so impact precedence is
+evaluated across every supplied message. Non-JSON input is treated as one raw
+commit message. Empty or malformed structured input, and any unknown message
+mixed with known messages, classify as `unknown`.
 
 Version components are incremented as exact decimal integers, so the release
 preparation script does not lose precision for arbitrarily large `X.Y.Z`

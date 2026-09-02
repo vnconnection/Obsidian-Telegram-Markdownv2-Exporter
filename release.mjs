@@ -331,7 +331,7 @@ function commitInputs(input) {
   const presentWrapperKeys = wrapperKeys.filter((key) => Object.hasOwn(input, key));
   if (presentWrapperKeys.length > 0) {
     if (presentWrapperKeys.some((key) => !Array.isArray(input[key]))) return [];
-    return input[presentWrapperKeys[0]];
+    return presentWrapperKeys.flatMap((key) => input[key]);
   }
   return [input];
 }
