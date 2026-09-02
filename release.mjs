@@ -23,24 +23,16 @@ export const SEMVER_TAG_PATTERN =
 const RELEASE_NOTE_SECTIONS = new Set([
   "Summary",
   "User-visible changes",
-  "Added",
-  "Changed",
-  "Fixed",
   "Breaking changes",
   "Migration",
-  "Documentation",
 ]);
 const RELEASE_NOTE_SECTION_ORDER = [
   "Summary",
   "User-visible changes",
-  "Added",
-  "Changed",
-  "Fixed",
   "Breaking changes",
   "Migration",
-  "Documentation",
 ];
-const RELEASE_NOTE_SECTION_PATTERN = /^## (Summary|User-visible changes|Added|Changed|Fixed|Breaking changes|Migration|Documentation)$/;
+const RELEASE_NOTE_SECTION_PATTERN = /^## (Summary|User-visible changes|Breaking changes|Migration)$/;
 const GENERIC_AUTHORED_NOTE_PATTERN = /^(?:because|changes?|generic|misc(?:ellaneous)?|n\/a|na|none|no changes?|not applicable|pending|placeholder|release(?: notes?)?|same as above|see above|tbd|todo|update(?:d|s)?|various|wip)\.?$/i;
 const UNSAFE_AUTHORED_NOTE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 const BREAKING_FOOTER_PREFIX_PATTERN = /^\s*BREAKING(?:[ \t]+CHANGE(?:S)?|-CHANGE(?:S)?)(?=[ \t:]|$)/i;
@@ -107,6 +99,15 @@ function releaseNotes(rootDirectory, version) {
     throw new Error(`Release notes Impact must be major, minor, or patch for a release: ${notesPath}`);
   }
   const sections = new Map();
+  const headingMatches = [...notes.matchAll(/^#{1,6}(?:[ \t]+[^\r\n]*)?$/gm)];
+  for (let index = 0; index < headingMatches.length; index += 1) {
+    const heading = headingMatches[index];
+    if (index === 0 && heading.index === 0 && heading[0] === `# Release ${version}`) continue;
+    if (/^##(?:[^#]|$)/.test(heading[0])) continue;
+    if (!RELEASE_NOTE_SECTION_PATTERN.test(heading[0])) {
+      throw new Error(`Release notes contain an unknown heading: ${heading[0].trim()}: ${notesPath}`);
+    }
+  }
   const sectionHeadings = [...notes.matchAll(/^##[^\r\n]*$/gm)];
   const newline = notes.includes("\r\n") ? "\r\n" : "\n";
   const blankLine = `${newline}${newline}`;
@@ -268,12 +269,12 @@ function signalFor(message) {
 
   const [, type, , breakingMarker] = header;
   const types = {
-    breaking: "major",
     feat: "minor",
     fix: "patch",
     perf: "patch",
     docs: "none",
     test: "none",
+    tests: "none",
     chore: "none",
     ci: "none",
     build: "none",
@@ -408,7 +409,7 @@ export function prepareRelease({ rootDirectory = process.cwd(), impact } = {}) {
 
 function cliArgs(args) {
   let impact;
-  let suppliedInput;
+  const suppliedInputs = [];
   const positional = [];
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--") continue;
@@ -416,9 +417,9 @@ function cliArgs(args) {
     else if (args[index].startsWith("--impact=")) impact = args[index].slice(9);
     else if (args[index] === "--input") {
       if (index + 1 >= args.length) throw new Error("--input requires a value");
-      suppliedInput = args[++index];
+      suppliedInputs.push(args[++index]);
     }
-    else if (args[index].startsWith("--input=")) suppliedInput = args[index].slice(8);
+    else if (args[index].startsWith("--input=")) suppliedInputs.push(args[index].slice(8));
     else if (args[index].startsWith("--")) throw new Error(`Unknown release option: ${args[index]}`);
     else positional.push(args[index]);
   }
@@ -427,20 +428,23 @@ function cliArgs(args) {
     version: positional[1],
     outputPath: positional[2],
     impact,
-    suppliedInput,
+    suppliedInputs,
     positionalInput: positional.slice(1),
   };
 }
 
 export function runCli(args = process.argv.slice(2)) {
-  const { command, version, outputPath, impact, suppliedInput, positionalInput } = cliArgs(args);
+  const { command, version, outputPath, impact, suppliedInputs, positionalInput } = cliArgs(args);
   if (command === "classify") {
     let messages = [];
-    const inputArguments = suppliedInput === undefined ? positionalInput : [suppliedInput];
+    const inputArguments = suppliedInputs.length === 0
+      ? positionalInput
+      : [...suppliedInputs, ...positionalInput];
     if (inputArguments.length > 0) {
-      messages = inputArguments.length === 1
-        ? parseSuppliedClassifyInput(inputArguments[0])
-        : inputArguments.map(parseSuppliedClassifyInput);
+      const parsedInputs = inputArguments.map(parseSuppliedClassifyInput);
+      messages = parsedInputs.length === 1
+        ? parsedInputs[0]
+        : parsedInputs.flatMap((input) => Array.isArray(input) ? input : [input]);
     } else {
       try {
         const tag = gitOutput(["describe", "--tags", "--abbrev=0"]);

@@ -55,6 +55,13 @@ evaluated across every supplied message. Non-JSON input is treated as one raw
 commit message. Empty or malformed structured input, and any unknown message
 mixed with known messages, classify as `unknown`.
 
+The classifier maps `feat` to `minor`, `fix` and `perf` to `patch`, and
+`docs`, `test`, `tests`, `chore`, `ci`, `build`, `refactor`, and `style` to
+`none`. A valid `!` header or terminal non-empty `BREAKING CHANGE:` or
+`BREAKING-CHANGE:` footer produces `major`; malformed, empty, non-terminal, or
+continued-text breaking footers produce `unknown`. Unknown input wins over any
+known impact in a mixed input.
+
 Version components are incremented as exact decimal integers, so the release
 preparation script does not lose precision for arbitrarily large `X.Y.Z`
 components.
@@ -67,12 +74,14 @@ GitHub Actions then publishes the authored notes body plus `main.js`,
 `manifest.json`, and the root-layout ZIP after the tag is pushed.
 Authored notes must use exact `Date`, `Impact`, and `Rationale` fields plus
 non-empty `Summary` and `User-visible changes` sections. The `##` headings
-must be canonical, unique, and ordered as documented; use exactly one blank
-line after the preamble and after each section heading, with one blank line
-between sections. Major releases additionally require `Breaking changes` and
-`Migration` sections; those sections are rejected for `patch` and `minor`
+must be exactly `Summary` followed by `User-visible changes`; use exactly one
+blank line after the preamble and after each section heading, with one blank
+line between sections. Major releases additionally require `Breaking changes`
+followed by `Migration`; those sections and every other heading are rejected
+for `patch` and `minor` notes, while every other heading is rejected for all
 notes. `none` and `unknown` are classifier outcomes for non-publishable or
-ambiguous changes, and release validation/package creation rejects them.
+ambiguous changes, and release validation/package creation rejects them
+identically.
 
 ## Format references
 

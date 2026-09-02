@@ -53,7 +53,7 @@ jobs:
       - name: Test release contract
         run: node --test release.test.mjs
 
-      - name: Verify tracked bundle before build
+      - name: Verify tracked bundle/style provenance before build
         shell: bash
         run: |
           set -euo pipefail
@@ -62,11 +62,20 @@ jobs:
           test "$(git hash-object -- main.js)" = "$(git rev-parse HEAD:main.js)"
           git diff --exit-code --no-ext-diff HEAD -- main.js
           test -s main.js
+          if git ls-files --error-unmatch -- styles.css >/dev/null 2>&1; then
+            git cat-file -e "HEAD:styles.css"
+            test "$(git hash-object -- styles.css)" = "$(git rev-parse HEAD:styles.css)"
+            git diff --exit-code --no-ext-diff HEAD -- styles.css
+            test -s styles.css
+          elif test -e styles.css; then
+            echo "styles.css exists but is not tracked" >&2
+            exit 1
+          fi
 
       - name: Production build
         run: npm run build
 
-      - name: Verify tracked bundle after build
+      - name: Verify tracked bundle/style provenance after build
         shell: bash
         run: |
           set -euo pipefail
@@ -75,6 +84,15 @@ jobs:
           test "$(git hash-object -- main.js)" = "$(git rev-parse HEAD:main.js)"
           git diff --exit-code --no-ext-diff HEAD -- main.js
           test -s main.js
+          if git ls-files --error-unmatch -- styles.css >/dev/null 2>&1; then
+            git cat-file -e "HEAD:styles.css"
+            test "$(git hash-object -- styles.css)" = "$(git rev-parse HEAD:styles.css)"
+            git diff --exit-code --no-ext-diff HEAD -- styles.css
+            test -s styles.css
+          elif test -e styles.css; then
+            echo "styles.css exists but is not tracked" >&2
+            exit 1
+          fi
 
       - name: Validate release assets and metadata
         run: npm run release:validate -- "$GITHUB_REF_NAME"
@@ -169,3 +187,19 @@ jobs:
           done
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir "$verify_directory" --clobber
           (cd "$verify_directory" && sha256sum -c "$checksum_file")
+
+      - name: Re-verify final remote tag target
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_commit="$(git rev-parse HEAD)"
+          final_remote_refs="$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" "refs/tags/$GITHUB_REF_NAME^{}")"
+          final_remote_tag_target="$(awk \
+            -v tag_ref="refs/tags/$GITHUB_REF_NAME" \
+            -v peeled_ref="refs/tags/$GITHUB_REF_NAME^{}" '
+              $2 == peeled_ref { print $1; found_peeled = 1; exit }
+              $2 == tag_ref { tag_object = $1 }
+              END { if (!found_peeled && tag_object != "") print tag_object }
+            ' <<<"$final_remote_refs")"
+          test -n "$final_remote_tag_target"
+          test "$final_remote_tag_target" = "$expected_commit"

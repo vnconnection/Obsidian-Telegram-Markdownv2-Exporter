@@ -37,31 +37,11 @@ One or two sentences describing the user-visible result.
 ## User-visible changes
 
 - A concrete user-visible change.
-
-## Added
-
-- A concrete user-visible addition.
-
-## Changed
-
-- A concrete user-visible behavior change.
-
-## Fixed
-
-- A concrete user-visible bug fix.
-
-## Breaking changes
-
-- Required for a major release, with migration instructions.
-
-## Migration
-
-- Required for a major release; describe the steps existing users must take.
-
-## Documentation
-
-- A concrete user-facing documentation change.
 ```
+
+For a `major` release, append `## Breaking changes` and `## Migration` after
+`## User-visible changes`; both sections are required. Do not add them to a
+`patch` or `minor` note.
 
 The file name and `Release X.Y.Z` heading must match the tag. The GitHub
 Release body must use this authored notes file; generated notes or a generic
@@ -71,13 +51,19 @@ The note grammar is exact: `Date`, `Impact`, and `Rationale` are single-line
 fields in that order, with `Impact` set to `major`, `minor`, or `patch`.
 There must be exactly one blank line after the preamble and after every `##`
 heading, and exactly one blank line between sections. Headings are unique and
-must use this order: `Summary`, `User-visible changes`, `Added`, `Changed`,
-`Fixed`, `Breaking changes`, `Migration`, `Documentation`; omit sections that
-do not apply. `Summary` and `User-visible changes` are always required, while
-`Breaking changes` and `Migration` are also required for a major release and
-rejected for `patch` and `minor` notes. `none` and `unknown` are classifier
-outcomes for non-publishable or ambiguous changes; release validation and
-packaging reject both values before publication.
+must use `Summary` followed by `User-visible changes`; only major notes may
+then contain `Breaking changes` followed by `Migration`, and both are required
+for major impact. Every other heading is rejected. `none` and `unknown` are
+classifier outcomes for non-publishable or ambiguous changes; release
+validation and packaging reject both values before publication using the same
+readiness rule.
+
+The classifier maps `feat` to `minor`, `fix` and `perf` to `patch`, and
+`docs`, `test`, `tests`, `chore`, `ci`, `build`, `refactor`, and `style` to
+`none`. A valid `!` header or terminal non-empty `BREAKING CHANGE:` or
+`BREAKING-CHANGE:` footer produces `major`; malformed, empty, non-terminal, or
+continued-text breaking footers produce `unknown`. Unknown input wins over
+any known impact in a mixed input.
 
 The release classifier accepts a structured wrapper only when each present
 `messages`, `commits`, or `commitMessages` field is an array. A string or any
@@ -134,9 +120,12 @@ npm run release:validate -- <X.Y.Z>
 
 `.github/workflows/release.yml` runs for an exact bare `X.Y.Z` tag, checks out
 that tag, installs with `npm ci`, runs the quality gates and release tests,
-validates metadata and required assets, creates the root-layout ZIP, and creates
-or updates the GitHub Release using the authored notes file. It publishes only
-`main.js`, `manifest.json`, and the ZIP; no stylesheet is expected.
+validates metadata and required assets, verifies tracked bundle/style provenance
+before and after the build, creates the root-layout ZIP, and creates or updates
+the GitHub Release using the authored notes file. It publishes only `main.js`,
+`manifest.json`, and the ZIP; no stylesheet is expected. Final verification
+checks the remote tag target again, published status including `publishedAt`,
+the byte-exact authored body, the exact asset set, and downloaded checksums.
 
 Push a commit and tag only after explicit authorization. After the workflow
 completes, verify the Release body, asset names and non-zero sizes, then test

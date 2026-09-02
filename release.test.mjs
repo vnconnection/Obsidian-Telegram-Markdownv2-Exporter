@@ -107,10 +107,11 @@ describe("release impact classification", () => {
       "build: update bundle",
       "refactor: preserve behavior",
       "style: format source",
+      "tests: add coverage",
     ]), "none");
     assert.equal(classifyImpact(["feat: add an option"]), "minor");
     assert.equal(classifyImpact(["perf: reduce export overhead"]), "patch");
-    assert.equal(classifyImpact(["breaking: remove the old option"]), "major");
+    assert.equal(classifyImpact(["breaking: remove the old option"]), "unknown");
   });
 
   it("uses major over minor and patch, then minor over patch", () => {
@@ -175,6 +176,13 @@ describe("release impact classification", () => {
       ])]), "major");
       assert.equal(runCli(["classify", JSON.stringify({ messages: "fix: bug" })]), "unknown");
       assert.equal(runCli(["classify", `--input=${JSON.stringify(["feat: add an option"])}`]), "minor");
+      assert.equal(runCli(["classify", "--input", JSON.stringify(["docs: clarify usage"]), "tests: add coverage"]), "none");
+      assert.equal(runCli([
+        "classify",
+        "--input",
+        JSON.stringify(["fix: bug"]),
+        "--input=feat: add an option",
+      ]), "minor");
       assert.equal(runCli(["classify", ""]), "unknown");
       assert.equal(runCli(["classify", "feat: add an option", "not a conventional commit"]), "unknown");
       assert.throws(() => runCli(["classify", "--input"]), /--input requires a value/);
@@ -331,7 +339,7 @@ describe("release notes and metadata", () => {
       () => validateRelease({ rootDirectory: createFixture({
         releaseNotes: `${note("A concrete reason.")}\n## Added\n\nnone\n`,
       }) }),
-      /## Added.*concrete, safe authored text/,
+      /unknown section|unknown heading/,
     );
     assert.throws(
       () => validateRelease({ rootDirectory: createFixture({ releaseNotes: note("A concrete\u0000reason.") }) }),
@@ -367,8 +375,13 @@ describe("release notes and metadata", () => {
       "##Summary\n\nA concrete summary.\n\n## User-visible changes\n\nA concrete change.",
       "## User-visible changes\n\nA concrete change.\n\n## Summary\n\nA concrete summary.",
       "## Summary\nA concrete summary.\n\n## User-visible changes\n\nA concrete change.",
+      "## Summary\n\nA concrete summary.\n\n## Added\n\nA concrete change.",
+      "## Summary\n\nA concrete summary.\n\n## Changed\n\nA concrete change.",
+      "## Summary\n\nA concrete summary.\n\n## Fixed\n\nA concrete change.",
+      "## Summary\n\nA concrete summary.\n\n## Documentation\n\nA concrete change.",
+      "## Summary\n\nA concrete summary.\n\n### Details\n\nA concrete change.",
     ]) {
-      assert.throws(() => validateRelease({ rootDirectory: createFixture({ releaseNotes: note(sections) }) }), /canonical|unknown section|blank line/);
+      assert.throws(() => validateRelease({ rootDirectory: createFixture({ releaseNotes: note(sections) }) }), /canonical|unknown section|unknown heading|blank line/);
     }
   });
 
@@ -443,6 +456,7 @@ describe("release assets and publication boundary", () => {
         releaseNotes: `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: ${impact}\nRationale: This classification is not publishable.\n\n## Summary\n\nA blocked release candidate.\n\n## User-visible changes\n\n- No release is published.\n`,
       });
       const archivePath = join(rootDirectory, "artifacts", `${impact}.zip`);
+      assert.throws(() => validateRelease({ rootDirectory, expectedVersion: "0.1.0" }), /Impact must be major, minor, or patch/);
       assert.throws(() => packageRelease({ rootDirectory, expectedVersion: "0.1.0", outputPath: archivePath }), /Impact must be major, minor, or patch/);
       assert.equal(existsSync(archivePath), false);
     }
@@ -478,11 +492,15 @@ describe("GitHub Actions release workflow", () => {
     assert.match(workflow, /npm test/);
     assert.match(workflow, /node --test release\.test\.mjs/);
     assert.match(workflow, /npm run build/);
-    assert.match(workflow, /Verify tracked bundle before build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
-    assert.match(workflow, /Verify tracked bundle after build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
+    assert.match(workflow, /Verify tracked bundle\/style provenance before build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
+    assert.match(workflow, /Verify tracked bundle\/style provenance after build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
     assert.equal((workflow.match(/git cat-file -e "HEAD:main\.js"/g) ?? []).length, 2);
     assert.equal((workflow.match(/git hash-object -- main\.js/g) ?? []).length, 2);
     assert.equal((workflow.match(/git rev-parse HEAD:main\.js/g) ?? []).length, 2);
+    assert.equal((workflow.match(/git cat-file -e "HEAD:styles\.css"/g) ?? []).length, 2);
+    assert.equal((workflow.match(/git hash-object -- styles\.css/g) ?? []).length, 2);
+    assert.equal((workflow.match(/git rev-parse HEAD:styles\.css/g) ?? []).length, 2);
+    assert.match(workflow, /styles\.css exists but is not tracked/);
     assert.match(workflow, /npm run release:validate -- \"\$GITHUB_REF_NAME\"/);
     assert.match(workflow, /--notes-file \"\$RELEASE_NOTES_PATH\"/);
     assert.doesNotMatch(workflow, /--generate-notes/);
@@ -503,6 +521,10 @@ describe("GitHub Actions release workflow", () => {
     assert.match(workflow, /test -n "\$\(jq -r '\.publishedAt \/\/ empty' <<<"\$release_status"\)"/);
     assert.match(workflow, /gh release download/);
     assert.match(workflow, /sha256sum -c/);
+    assert.match(workflow, /Re-verify final remote tag target/);
+    assert.match(workflow, /final_remote_refs/);
+    assert.match(workflow, /final_remote_tag_target/);
+    assert.ok((workflow.match(/git ls-remote origin/g) ?? []).length >= 2);
     assert.match(workflow, /release_assets=\(main\.js manifest\.json \"\$ZIP_PATH\"\)/);
     assert.match(workflow, /expected_entries=\(main\.js manifest\.json\)/);
     assert.ok(workflow.indexOf("npm run release:validate") < workflow.indexOf("gh release"));
