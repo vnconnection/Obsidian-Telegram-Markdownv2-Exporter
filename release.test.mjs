@@ -242,6 +242,9 @@ describe("release impact classification", () => {
   });
 
   it("classifies structured commit inputs with the same rules as text commits", () => {
+    const textImpact = classifyImpact(["fix: escape a Telegram delimiter"]);
+    assert.equal(textImpact, "patch");
+    assert.equal(classifyImpact({ messages: [{ header: ["fix: escape a Telegram delimiter"] }] }), textImpact);
     assert.equal(classifyImpact({
       commitMessages: [
         { header: "docs: clarify usage" },
@@ -265,6 +268,28 @@ describe("release impact classification", () => {
 
   it("does not fall back to an outer field when a nested structured field is malformed", () => {
     assert.equal(classifyImpact({ commit: { message: 42 }, header: "fix: bug" }), "unknown");
+  });
+
+  it("rejects nested arrays without flattening or ignoring them", () => {
+    const nestedInputs = [
+      [["fix: bug"]],
+      { messages: [["fix: bug"]] },
+      { commits: [[{ header: "fix: bug" }]] },
+      { commitMessages: [["fix: bug"]] },
+      { messages: [{ header: [["fix: bug"]] }] },
+    ];
+    for (const input of nestedInputs) assert.equal(classifyImpact(input), "unknown");
+
+    assert.equal(classifyImpact({ messages: ["fix: bug"], commits: [["feat: option"]] }), "unknown");
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      assert.equal(runCli(["classify", JSON.stringify([["fix: bug"]]), "feat: option"]), "unknown");
+      assert.equal(runCli(["classify", JSON.stringify({ messages: [["fix: bug"]] }), "feat: option"]), "unknown");
+    } finally {
+      console.log = originalLog;
+    }
   });
 
   it("maps supported impacts across semver boundaries", () => {

@@ -94,6 +94,9 @@ or `commitMessages`; those wrapper fields must be arrays and all present arrays
 are aggregated. Invalid JSON is treated as one raw message. Empty or malformed
 structured input, or any unknown message among known messages, returns
 `unknown` because ambiguity takes precedence over a version bump.
+Nested arrays in message lists or structured text parts are malformed; they
+are never flattened or ignored and therefore return `unknown` as well. The
+same rule applies to direct `classifyImpact` calls and CLI-supplied input.
 
 `release:prepare` requires an explicit impact and updates version metadata only;
 it does not commit, create a tag, push, create a GitHub Release, or upload

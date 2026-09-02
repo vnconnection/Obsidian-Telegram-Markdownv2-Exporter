@@ -53,7 +53,9 @@ wrapper field is malformed structured input. All present arrays are aggregated
 in `commitMessages`, `messages`, `commits` order, so impact precedence is
 evaluated across every supplied message. Non-JSON input is treated as one raw
 commit message. Empty or malformed structured input, and any unknown message
-mixed with known messages, classify as `unknown`.
+mixed with known messages, classify as `unknown`. Nested arrays in message
+lists or structured text parts are malformed; they are never flattened or
+ignored, so they also classify as `unknown`.
 
 The classifier maps `feat` to `minor`, `fix` and `perf` to `patch`, and
 `docs`, `test`, `tests`, `chore`, `ci`, `build`, `refactor`, and `style` to

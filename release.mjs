@@ -296,6 +296,10 @@ function textPart(value) {
   return null;
 }
 
+function hasNestedArray(values) {
+  return Array.isArray(values) && values.some((value) => Array.isArray(value));
+}
+
 function structuredCommitText(commit) {
   if (typeof commit === "string") return commit;
   if (!commit || typeof commit !== "object" || Array.isArray(commit)) return null;
@@ -336,14 +340,19 @@ function structuredCommitText(commit) {
 }
 
 function commitInputs(input) {
-  if (Array.isArray(input)) return input;
+  if (Array.isArray(input)) return hasNestedArray(input) ? null : input;
   if (typeof input === "string") return [input];
   if (!input || typeof input !== "object") return [];
   const wrapperKeys = ["commitMessages", "messages", "commits"];
   const presentWrapperKeys = wrapperKeys.filter((key) => Object.hasOwn(input, key));
   if (presentWrapperKeys.length > 0) {
     if (presentWrapperKeys.some((key) => !Array.isArray(input[key]))) return [];
-    return presentWrapperKeys.flatMap((key) => input[key]);
+    if (presentWrapperKeys.some((key) => hasNestedArray(input[key]))) return null;
+    const messages = [];
+    for (const key of presentWrapperKeys) {
+      for (const message of input[key]) messages.push(message);
+    }
+    return messages;
   }
   return [input];
 }
@@ -444,7 +453,16 @@ export function runCli(args = process.argv.slice(2)) {
       const parsedInputs = inputArguments.map(parseSuppliedClassifyInput);
       messages = parsedInputs.length === 1
         ? parsedInputs[0]
-        : parsedInputs.flatMap((input) => Array.isArray(input) ? input : [input]);
+        : parsedInputs.reduce((allMessages, input) => {
+          if (Array.isArray(input) && hasNestedArray(input)) {
+            allMessages.push(input);
+          } else if (Array.isArray(input)) {
+            for (const message of input) allMessages.push(message);
+          } else {
+            allMessages.push(input);
+          }
+          return allMessages;
+        }, []);
     } else {
       try {
         const tag = gitOutput(["describe", "--tags", "--abbrev=0"]);
