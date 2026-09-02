@@ -263,6 +263,10 @@ describe("release impact classification", () => {
     ] }), "unknown");
   });
 
+  it("does not fall back to an outer field when a nested structured field is malformed", () => {
+    assert.equal(classifyImpact({ commit: { message: 42 }, header: "fix: bug" }), "unknown");
+  });
+
   it("maps supported impacts across semver boundaries", () => {
     for (const [currentVersion, impact, expectedVersion] of [
       ["0.0.0", "patch", "0.0.1"],

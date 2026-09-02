@@ -307,9 +307,9 @@ function structuredCommitText(commit) {
       return null;
     }
   }
-  if (commit.commit && typeof commit.commit === "object" && !Array.isArray(commit.commit)) {
-    const nestedMessage = structuredCommitText(commit.commit);
-    if (nestedMessage !== null) return nestedMessage;
+  if (Object.hasOwn(commit, "commit")) {
+    if (!commit.commit || typeof commit.commit !== "object" || Array.isArray(commit.commit)) return null;
+    return structuredCommitText(commit.commit);
   }
 
   const header = textPart(commit.header);
