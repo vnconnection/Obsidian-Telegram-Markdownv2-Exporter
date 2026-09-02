@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "0.[0-9]*.[0-9]*"
-      - "[1-9]*.[0-9]*.[0-9]*"
+      - "0.[0-9]+.[0-9]+"
+      - "[1-9]+.[0-9]+.[0-9]+"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -96,3 +96,39 @@ jobs:
               --notes-file "$RELEASE_NOTES_PATH" \
               --title "$GITHUB_REF_NAME"
           fi
+
+      - name: Verify published tag, body, assets, and checksums
+        shell: bash
+        env:
+          ZIP_PATH: artifacts/telegram-markdownv2-exporter-${{ github.ref_name }}.zip
+          RELEASE_NOTES_PATH: docs/releases/${{ github.ref_name }}.md
+        run: |
+          set -euo pipefail
+          expected_commit="$(git rev-parse HEAD)"
+          remote_refs="$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" "refs/tags/$GITHUB_REF_NAME^{}" || true)"
+          remote_commit="$(printf '%s\n' "$remote_refs" | awk '$2 == "refs/tags/'"$GITHUB_REF_NAME"'^{}" { print $1 } $2 == "refs/tags/'"$GITHUB_REF_NAME"'" { print $1 }' | tail -n 1)"
+          test "$remote_commit" = "$expected_commit"
+
+          verify_directory="$(mktemp -d)"
+          trap 'rm -rf "$verify_directory"' EXIT
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$verify_directory/release-body.md"
+          cmp -s "$RELEASE_NOTES_PATH" "$verify_directory/release-body.md"
+
+          zip_name="$(basename "$ZIP_PATH")"
+          expected_assets=(main.js manifest.json "$zip_name")
+          mapfile -t actual_assets < <(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)
+          mapfile -t sorted_expected_assets < <(printf '%s\n' "${expected_assets[@]}" | sort)
+          if [[ "${actual_assets[*]}" != "${sorted_expected_assets[*]}" ]]; then
+            printf 'Unexpected published assets:\n%s\n' "${actual_assets[*]}" >&2
+            exit 1
+          fi
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.size <= 0) | .name' | (! grep -q .)
+
+          checksum_file="$verify_directory/release.sha256"
+          for asset in main.js manifest.json "$ZIP_PATH"; do
+            asset_name="$(basename "$asset")"
+            asset_hash="$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            printf '%s  %s\n' "$asset_hash" "$asset_name" >> "$checksum_file"
+          done
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir "$verify_directory" --clobber
+          (cd "$verify_directory" && sha256sum -c "$checksum_file")

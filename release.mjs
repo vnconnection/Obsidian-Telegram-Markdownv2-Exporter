@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 export const RELEASE_ASSETS = ["main.js", "manifest.json"];
 export const RELEASE_MANIFEST_ID = "telegram-markdownv2-exporter";
 export const RELEASE_NOTES_DIRECTORY = join("docs", "releases");
-export const RELEASE_IMPACTS = ["patch", "minor", "major"];
+export const RELEASE_IMPACTS = ["major", "minor", "patch", "none", "unknown"];
 export const SEMVER_TAG_PATTERN =
   /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 
@@ -51,10 +51,39 @@ function releaseNotes(rootDirectory, version) {
   if (!date || !parsedDate || Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== date) {
     throw new Error(`Release notes date is missing or invalid: ${notesPath}`);
   }
-  if (!/^\s*-\s+(?!update$|todo$|user-visible change\.?$)\S.{8,}$/im.test(notes)) {
+  const sections = new Map();
+  const sectionHeadings = [...notes.matchAll(/^##[ \t]+(.+?)[ \t]*$/gm)];
+  for (let index = 0; index < sectionHeadings.length; index += 1) {
+    const heading = sectionHeadings[index];
+    const title = heading[1].trim().toLowerCase();
+    const contentStart = heading.index + heading[0].length;
+    const contentEnd = sectionHeadings[index + 1]?.index ?? notes.length;
+    sections.set(title, notes.slice(contentStart, contentEnd).trim());
+  }
+
+  const requiredSections = ["summary", "impact", "rationale"];
+  for (const title of requiredSections) {
+    const content = sections.get(title);
+    if (!content || /^(?:[-*][ \t]*)?(?:update|todo|tbd|n\/a|none)\.?$/i.test(content)) {
+      throw new Error(`Release notes must contain a non-empty ## ${title[0].toUpperCase()}${title.slice(1)} section: ${notesPath}`);
+    }
+  }
+  if (!/\b(?:major|minor|patch|none|unknown)\b/i.test(sections.get("impact"))) {
+    throw new Error(`Release notes Impact must name one of major, minor, patch, none, or unknown: ${notesPath}`);
+  }
+  const impact = sections.get("impact").match(/\b(major|minor|patch|none|unknown)\b/i)?.[1].toLowerCase();
+  if (impact === "major") {
+    for (const title of ["breaking changes", "migration"]) {
+      const content = sections.get(title);
+      if (!content || /^(?:[-*][ \t]*)?(?:update|todo|tbd|n\/a|none)\.?$/i.test(content)) {
+        throw new Error(`Major release notes must contain a non-empty ## ${title.replace(/\b\w/g, (letter) => letter.toUpperCase())} section: ${notesPath}`);
+      }
+    }
+  }
+  if (/^(?:update|todo|tbd|n\/a|user-visible change\.?)$/i.test(sections.get("summary"))) {
     throw new Error(`Release notes must contain a concrete change: ${notesPath}`);
   }
-  return { notesPath, notes };
+  return { notesPath, notes, impact };
 }
 
 export function validateRelease({ rootDirectory = process.cwd(), expectedVersion } = {}) {
@@ -69,7 +98,10 @@ export function validateRelease({ rootDirectory = process.cwd(), expectedVersion
   if (packageLock.version !== version || packageLock.packages?.[""]?.version !== version) {
     throw new Error(`package-lock.json version does not match package.json version (${version})`);
   }
-  if (versions?.[version] !== manifest.minAppVersion) {
+  if (typeof manifest.minAppVersion !== "string" || manifest.minAppVersion.trim().length === 0) {
+    throw new Error("manifest.json minAppVersion must be a non-empty string");
+  }
+  if (!versions || typeof versions !== "object" || Array.isArray(versions) || versions[version] !== manifest.minAppVersion) {
     throw new Error(`versions.json must map ${version} to manifest.minAppVersion (${manifest.minAppVersion})`);
   }
   if (expectedVersion !== undefined) {
@@ -98,7 +130,7 @@ export function packageRelease({ rootDirectory = process.cwd(), expectedVersion,
 
 export function computeNextVersion(currentVersion, impact) {
   assertBareSemver(currentVersion, "Current version");
-  if (!RELEASE_IMPACTS.includes(impact)) throw new Error(`Impact must be patch, minor, or major: ${impact}`);
+  if (!["patch", "minor", "major"].includes(impact)) throw new Error(`Impact must be patch, minor, or major: ${impact}`);
   const [major, minor, patch] = currentVersion.split(".").map(Number);
   if (impact === "major") return `${major + 1}.0.0`;
   if (impact === "minor") return `${major}.${minor + 1}.0`;
@@ -106,17 +138,54 @@ export function computeNextVersion(currentVersion, impact) {
 }
 
 function signalFor(message) {
-  const subject = message.split(/\r?\n/, 1)[0].trim();
-  if (/BREAKING CHANGE(?:S)?\s*:/i.test(message) || /^[a-z]+(?:\([^)]*\))?!:/i.test(subject)) return "major";
-  if (/^feat(?:\([^)]*\))?:/i.test(subject)) return "minor";
-  if (/^(?:fix|perf|refactor)(?:\([^)]*\))?:/i.test(subject)) return "patch";
-  return null;
+  const lines = message.split(/\r?\n/);
+  const subject = lines[0].trim();
+  const header = subject.match(/^([a-z]+)(?:\(([^()\r\n]+)\))?(!)?:\s+\S.*$/);
+  const footerStart = lines.findIndex((line, index) => index > 0 && line.trim() === "");
+  const footerLines = footerStart === -1 ? [] : lines.slice(footerStart + 1);
+  const hasBreakingFooter = footerLines.some((line) => /^\s*BREAKING(?:[ -])CHANGE\s*:/i.test(line));
+  if (hasBreakingFooter) return "major";
+  if (!header) return null;
+
+  const [, type, , breakingMarker] = header;
+  const types = {
+    feat: "minor",
+    fix: "patch",
+    perf: "patch",
+    docs: "none",
+    test: "none",
+    chore: "none",
+    ci: "none",
+    build: "none",
+    refactor: "none",
+    style: "none",
+  };
+  if (!Object.hasOwn(types, type)) return null;
+  if (breakingMarker) return "major";
+  return types[type];
 }
 
 export function classifyImpact(input = []) {
-  const messages = Array.isArray(input) ? input : input.commitMessages ?? input.messages ?? [];
-  const signals = messages.map((message) => ({ message: String(message), impact: signalFor(String(message)) })).filter((signal) => signal.impact);
-  const impact = signals.some((signal) => signal.impact === "major") ? "major" : signals.some((signal) => signal.impact === "minor") ? "minor" : signals.some((signal) => signal.impact === "patch") ? "patch" : "unknown";
+  const messages = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? [input]
+      : input.commitMessages ?? input.messages ?? [];
+  const classified = messages.map((message) => {
+    const normalizedMessage = String(message);
+    return { message: normalizedMessage, impact: signalFor(normalizedMessage) };
+  });
+  const signals = classified.filter((signal) => signal.impact);
+  const hasMalformedNonEmptyMessage = classified.some((signal) => signal.message.trim().length > 0 && !signal.impact);
+  const impact = hasMalformedNonEmptyMessage
+    ? "unknown"
+    : signals.some((signal) => signal.impact === "major")
+      ? "major"
+      : signals.some((signal) => signal.impact === "minor")
+        ? "minor"
+        : signals.some((signal) => signal.impact === "patch")
+          ? "patch"
+          : "none";
   return { impact, signals };
 }
 
@@ -149,7 +218,7 @@ function assertCleanWorktree(rootDirectory) {
 }
 
 export function prepareRelease({ rootDirectory = process.cwd(), impact } = {}) {
-  if (!RELEASE_IMPACTS.includes(impact)) throw new Error(`prepare requires an explicit --impact of patch, minor, or major: ${impact ?? "missing"}`);
+  if (!["patch", "minor", "major"].includes(impact)) throw new Error(`prepare requires an explicit --impact of patch, minor, or major: ${impact ?? "missing"}`);
   assertCleanWorktree(rootDirectory);
   const currentVersion = readJson(join(rootDirectory, "package.json")).version;
   const targetVersion = computeNextVersion(currentVersion, impact);

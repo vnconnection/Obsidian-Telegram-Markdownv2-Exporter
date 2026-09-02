@@ -32,6 +32,14 @@ Date: YYYY-MM-DD
 
 One or two sentences describing the user-visible result.
 
+## Impact
+
+`patch` — state the backward-compatible user impact.
+
+## Rationale
+
+Explain why this impact classification and version bump are correct.
+
 ## Added
 
 - A concrete user-visible addition.
@@ -47,6 +55,10 @@ One or two sentences describing the user-visible result.
 ## Breaking changes
 
 - Required for a breaking release, with migration instructions.
+
+## Migration
+
+- Required for a major release; describe the steps existing users must take.
 
 ## Documentation
 
