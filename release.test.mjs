@@ -15,6 +15,7 @@ import {
   validateRelease,
 } from "./release.mjs";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -134,6 +135,19 @@ describe("release impact classification", () => {
     }
     assert.equal(classifyImpact(["feat!: change behavior"]), "major");
     assert.equal(classifyImpact(["not a conventional commit\n\nBREAKING CHANGE: ignored"]), "unknown");
+  });
+
+  it("requires a breaking footer to be terminal and preserves unknown precedence", () => {
+    const valid = "fix: change behavior\n\nBREAKING CHANGE: migrate the setting";
+    assert.equal(classifyImpact([valid]), "major");
+    for (const suffix of ["\n\nRefs: #123", "\ncontinued text"]) {
+      assert.equal(classifyImpact([`${valid}${suffix}`]), "unknown");
+    }
+    assert.equal(classifyImpact([valid, "fix: change behavior\n\nBREAKING CHANGE: ???"]), "unknown");
+    assert.equal(classifyImpact({
+      commitMessages: [valid],
+      messages: ["fix: change behavior\n\nBREAKING CHANGE migrate the setting"],
+    }), "unknown");
   });
 
   it("treats empty or ambiguous breaking footers as unknown", () => {
@@ -336,6 +350,16 @@ describe("release notes and metadata", () => {
     }) }));
   });
 
+  it("rejects breaking-only sections on non-major notes", () => {
+    const note = (section) => `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch\nRationale: A backward-compatible fix.\n\n## Summary\n\nA compatible export fix.\n\n## User-visible changes\n\n- Existing exports remain compatible.\n\n## ${section}\n\n- A major-only release detail.\n`;
+    for (const section of ["Breaking changes", "Migration"]) {
+      assert.throws(
+        () => validateRelease({ rootDirectory: createFixture({ releaseNotes: note(section) }) }),
+        new RegExp(`## ${section}.*only allowed for major impact`),
+      );
+    }
+  });
+
   it("rejects non-canonical section headings and ordering", () => {
     const note = (sections) => `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch\nRationale: A concrete release reason.\n\n${sections}\n`;
     for (const sections of [
@@ -413,6 +437,17 @@ describe("release assets and publication boundary", () => {
     );
   });
 
+  it("does not package notes classified as none or unknown", () => {
+    for (const impact of ["none", "unknown"]) {
+      const rootDirectory = createFixture({
+        releaseNotes: `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: ${impact}\nRationale: This classification is not publishable.\n\n## Summary\n\nA blocked release candidate.\n\n## User-visible changes\n\n- No release is published.\n`,
+      });
+      const archivePath = join(rootDirectory, "artifacts", `${impact}.zip`);
+      assert.throws(() => packageRelease({ rootDirectory, expectedVersion: "0.1.0", outputPath: archivePath }), /Impact must be major, minor, or patch/);
+      assert.equal(existsSync(archivePath), false);
+    }
+  });
+
   it("prepares metadata without publishing, tagging, or creating artifacts", () => {
     const rootDirectory = createFixture();
     initializeGitFixture(rootDirectory);
@@ -465,9 +500,11 @@ describe("GitHub Actions release workflow", () => {
     assert.match(workflow, /isDraft/);
     assert.match(workflow, /isPrerelease/);
     assert.match(workflow, /publishedAt/);
+    assert.match(workflow, /test -n "\$\(jq -r '\.publishedAt \/\/ empty' <<<"\$release_status"\)"/);
     assert.match(workflow, /gh release download/);
     assert.match(workflow, /sha256sum -c/);
     assert.match(workflow, /release_assets=\(main\.js manifest\.json \"\$ZIP_PATH\"\)/);
     assert.match(workflow, /expected_entries=\(main\.js manifest\.json\)/);
+    assert.ok(workflow.indexOf("npm run release:validate") < workflow.indexOf("gh release"));
   });
 });

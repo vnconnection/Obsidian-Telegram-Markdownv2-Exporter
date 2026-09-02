@@ -70,7 +70,9 @@ non-empty `Summary` and `User-visible changes` sections. The `##` headings
 must be canonical, unique, and ordered as documented; use exactly one blank
 line after the preamble and after each section heading, with one blank line
 between sections. Major releases additionally require `Breaking changes` and
-`Migration` sections.
+`Migration` sections; those sections are rejected for `patch` and `minor`
+notes. `none` and `unknown` are classifier outcomes for non-publishable or
+ambiguous changes, and release validation/package creation rejects them.
 
 ## Format references
 

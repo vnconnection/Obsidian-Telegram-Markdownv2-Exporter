@@ -160,6 +160,12 @@ function releaseNotes(rootDirectory, version) {
         throw new Error(`Major release notes must contain a non-empty ## ${title} section: ${notesPath}`);
       }
     }
+  } else {
+    for (const title of ["Breaking changes", "Migration"]) {
+      if (sections.has(title)) {
+        throw new Error(`Release notes ## ${title} is only allowed for major impact: ${notesPath}`);
+      }
+    }
   }
   assertConcreteAuthoredNote(rationale, "Rationale", notesPath);
   return { notesPath, notes, impact };
@@ -233,12 +239,17 @@ export function computeNextVersion(currentVersion, impact) {
 
 function breakingFooterSignal(lines) {
   const firstBlankLine = lines.findIndex((line, index) => index > 0 && line.trim() === "");
-  const candidateLines = lines.slice(firstBlankLine === -1 ? 1 : firstBlankLine + 1)
-    .filter((line) => BREAKING_FOOTER_PREFIX_PATTERN.test(line));
-  if (candidateLines.length === 0) return null;
-  if (firstBlankLine === -1 || candidateLines.length !== 1) return "unknown";
+  const footerLines = lines.slice(firstBlankLine === -1 ? 1 : firstBlankLine + 1);
+  const candidateIndexes = footerLines
+    .map((line, index) => BREAKING_FOOTER_PREFIX_PATTERN.test(line) ? index : -1)
+    .filter((index) => index !== -1);
+  if (candidateIndexes.length === 0) return null;
+  if (firstBlankLine === -1 || candidateIndexes.length !== 1) return "unknown";
 
-  const match = candidateLines[0].match(BREAKING_FOOTER_PATTERN);
+  const candidateIndex = candidateIndexes[0];
+  if (footerLines.slice(candidateIndex + 1).some((line) => line.trim() !== "")) return "unknown";
+
+  const match = footerLines[candidateIndex].match(BREAKING_FOOTER_PATTERN);
   const description = match?.[1]?.trim();
   if (
     !description ||

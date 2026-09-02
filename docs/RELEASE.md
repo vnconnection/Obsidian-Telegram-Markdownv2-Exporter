@@ -74,7 +74,10 @@ heading, and exactly one blank line between sections. Headings are unique and
 must use this order: `Summary`, `User-visible changes`, `Added`, `Changed`,
 `Fixed`, `Breaking changes`, `Migration`, `Documentation`; omit sections that
 do not apply. `Summary` and `User-visible changes` are always required, while
-`Breaking changes` and `Migration` are also required for a major release.
+`Breaking changes` and `Migration` are also required for a major release and
+rejected for `patch` and `minor` notes. `none` and `unknown` are classifier
+outcomes for non-publishable or ambiguous changes; release validation and
+packaging reject both values before publication.
 
 The release classifier accepts a structured wrapper only when each present
 `messages`, `commits`, or `commitMessages` field is an array. A string or any
