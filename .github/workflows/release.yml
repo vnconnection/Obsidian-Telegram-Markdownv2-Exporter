@@ -105,14 +105,22 @@ jobs:
         run: |
           set -euo pipefail
           expected_commit="$(git rev-parse HEAD)"
-          remote_refs="$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" "refs/tags/$GITHUB_REF_NAME^{}" || true)"
-          remote_commit="$(printf '%s\n' "$remote_refs" | awk '$2 == "refs/tags/'"$GITHUB_REF_NAME"'^{}" { print $1 } $2 == "refs/tags/'"$GITHUB_REF_NAME"'" { print $1 }' | tail -n 1)"
-          test "$remote_commit" = "$expected_commit"
+          remote_refs="$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" "refs/tags/$GITHUB_REF_NAME^{}")"
+          remote_tag_target="$(awk \
+            -v tag_ref="refs/tags/$GITHUB_REF_NAME" \
+            -v peeled_ref="refs/tags/$GITHUB_REF_NAME^{}" '
+              $2 == peeled_ref { print $1; found_peeled = 1; exit }
+              $2 == tag_ref { tag_object = $1 }
+              END { if (!found_peeled && tag_object != "") print tag_object }
+            ' <<<"$remote_refs")"
+          test -n "$remote_tag_target"
+          test "$remote_tag_target" = "$expected_commit"
 
-          release_status="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName)"
+          release_status="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,publishedAt,tagName)"
           test "$(jq -r '.tagName' <<<"$release_status")" = "$GITHUB_REF_NAME"
           test "$(jq -r '.isDraft' <<<"$release_status")" = "false"
           test "$(jq -r '.isPrerelease' <<<"$release_status")" = "false"
+          test -n "$(jq -r '.publishedAt // empty' <<<"$release_status")"
 
           verify_directory="$(mktemp -d)"
           trap 'rm -rf "$verify_directory"' EXIT

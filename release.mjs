@@ -30,6 +30,8 @@ const RELEASE_NOTE_SECTIONS = new Set([
   "Migration",
   "Documentation",
 ]);
+const GENERIC_AUTHORED_NOTE_PATTERN = /^(?:because|changes?|generic|misc(?:ellaneous)?|n\/a|na|none|no changes?|not applicable|pending|placeholder|release(?: notes?)?|same as above|see above|tbd|todo|update(?:d|s)?|various|wip)\.?$/i;
+const UNSAFE_AUTHORED_NOTE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const writeJson = (path, value) =>
@@ -46,6 +48,26 @@ function assertBareSemver(version, label) {
 function assertNonEmptyFile(path) {
   if (!existsSync(path) || !statSync(path).isFile() || statSync(path).size === 0) {
     throw new Error(`Release asset is missing or empty: ${path}`);
+  }
+}
+
+function authoredNoteText(value) {
+  if (typeof value !== "string" || UNSAFE_AUTHORED_NOTE_PATTERN.test(value)) return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  if (!/[\p{L}\p{N}]/u.test(normalized)) return null;
+  const lines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const isGenericLine = (line) => {
+    const withoutListMarker = line.replace(/^(?:(?:[-*+]|[0-9]+[.)])[ \t]+)+/, "").trim();
+    return !withoutListMarker || GENERIC_AUTHORED_NOTE_PATTERN.test(withoutListMarker);
+  };
+  if (lines.length === 0 || lines.every(isGenericLine)) return null;
+  return normalized;
+}
+
+function assertConcreteAuthoredNote(value, label, notesPath) {
+  if (!authoredNoteText(value)) {
+    throw new Error(`Release notes ${label} must contain non-empty, concrete, safe authored text: ${notesPath}`);
   }
 }
 
@@ -67,13 +89,9 @@ function releaseNotes(rootDirectory, version) {
   if (!date || !parsedDate || Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== date) {
     throw new Error(`Release notes date is missing or invalid: ${notesPath}`);
   }
-  if (/^(?:update|todo|tbd|n\/a|none)\.?$/i.test(rationale.trim())) {
-    throw new Error(`Release notes Rationale must contain a concrete explanation: ${notesPath}`);
-  }
   if (impact === "none" || impact === "unknown") {
     throw new Error(`Release notes Impact must be major, minor, or patch for a release: ${notesPath}`);
   }
-
   const sections = new Map();
   const sectionHeadings = [...notes.matchAll(/^##[^\r\n]*$/gm)];
   const preambleEnd = preamble.index + preamble[0].length;
@@ -92,24 +110,27 @@ function releaseNotes(rootDirectory, version) {
     }
     const contentStart = heading.index + heading[0].length;
     const contentEnd = sectionHeadings[index + 1]?.index ?? notes.length;
-    sections.set(title, notes.slice(contentStart, contentEnd).trim());
+    const content = notes.slice(contentStart, contentEnd).trim();
+    assertConcreteAuthoredNote(content, `## ${title}`, notesPath);
+    sections.set(title, content);
   }
 
   const requiredSections = ["Summary", "User-visible changes"];
   for (const title of requiredSections) {
     const content = sections.get(title);
-    if (!content || /^(?:[-*][ \t]*)?(?:update|todo|tbd|n\/a|none)\.?$/i.test(content)) {
+    if (!content) {
       throw new Error(`Release notes must contain a non-empty ## ${title}: ${notesPath}`);
     }
   }
   if (impact === "major") {
     for (const title of ["Breaking changes", "Migration"]) {
       const content = sections.get(title);
-      if (!content || /^(?:[-*][ \t]*)?(?:update|todo|tbd|n\/a|none)\.?$/i.test(content)) {
+      if (!content) {
         throw new Error(`Major release notes must contain a non-empty ## ${title} section: ${notesPath}`);
       }
     }
   }
+  assertConcreteAuthoredNote(rationale, "Rationale", notesPath);
   return { notesPath, notes, impact };
 }
 
@@ -212,16 +233,73 @@ function signalFor(message) {
   return types[type];
 }
 
+function textPart(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.every((part) => typeof part === "string")) return value.join("\n");
+  return null;
+}
+
+function structuredCommitText(commit) {
+  if (typeof commit === "string") return commit;
+  if (!commit || typeof commit !== "object" || Array.isArray(commit)) return null;
+
+  for (const key of ["message", "commitMessage", "raw", "rawMessage"]) {
+    if (Object.hasOwn(commit, key)) {
+      const message = textPart(commit[key]);
+      if (message !== null) return message;
+      return null;
+    }
+  }
+  if (commit.commit && typeof commit.commit === "object" && !Array.isArray(commit.commit)) {
+    const nestedMessage = structuredCommitText(commit.commit);
+    if (nestedMessage !== null) return nestedMessage;
+  }
+
+  const header = textPart(commit.header);
+  const subject = textPart(commit.subject);
+  const type = textPart(commit.type);
+  if ((Object.hasOwn(commit, "header") && header === null) ||
+      (Object.hasOwn(commit, "subject") && subject === null) ||
+      (Object.hasOwn(commit, "type") && type === null)) return null;
+  if (header === null && subject === null) return null;
+
+  let firstLine = header ?? subject;
+  if (header === null && type !== null && subject !== null && !/^[a-z]+(?:\([^()\r\n]+\))?!?:\s+\S.*$/.test(subject)) {
+    const scope = textPart(commit.scope);
+    if (Object.hasOwn(commit, "scope") && scope === null) return null;
+    const breaking = commit.breaking === true || commit.isBreaking === true || commit.breakingMarker === "!";
+    firstLine = `${type}${scope ? `(${scope})` : ""}${breaking ? "!" : ""}: ${subject}`;
+  }
+
+  const body = textPart(commit.body);
+  const footer = textPart(commit.footer);
+  if ((Object.hasOwn(commit, "body") && body === null) ||
+      (Object.hasOwn(commit, "footer") && footer === null)) return null;
+  return [firstLine, body, footer].filter((part) => part !== null && part !== "").join("\n\n");
+}
+
+function commitInputs(input) {
+  if (Array.isArray(input)) return input;
+  if (typeof input === "string") return [input];
+  if (!input || typeof input !== "object") return [];
+  for (const key of ["commitMessages", "messages", "commits"]) {
+    if (Object.hasOwn(input, key)) {
+      const value = input[key];
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string" || (value && typeof value === "object")) return [value];
+      return [];
+    }
+  }
+  return [input];
+}
+
 export function classifyImpact(input = []) {
-  const messages = Array.isArray(input)
-    ? input
-    : typeof input === "string"
-      ? [input]
-      : input && typeof input === "object"
-        ? input.commitMessages ?? input.messages ?? []
-        : [];
+  const messages = commitInputs(input);
   if (!Array.isArray(messages) || messages.length === 0) return "unknown";
-  const impacts = messages.map((message) => signalFor(String(message)));
+  const impacts = messages.map((message) => {
+    const text = structuredCommitText(message);
+    return text === null ? null : signalFor(text);
+  });
   if (impacts.some((impact) => impact === null)) return "unknown";
   if (impacts.includes("major")) return "major";
   if (impacts.includes("minor")) return "minor";

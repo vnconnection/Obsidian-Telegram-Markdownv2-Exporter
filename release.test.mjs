@@ -132,6 +132,28 @@ describe("release impact classification", () => {
     assert.equal(classifyImpact(null), "unknown");
   });
 
+  it("classifies structured commit inputs with the same rules as text commits", () => {
+    assert.equal(classifyImpact({
+      commitMessages: [
+        { header: "docs: clarify usage" },
+        { message: "fix: escape a Telegram delimiter" },
+      ],
+    }), "patch");
+    assert.equal(classifyImpact({
+      messages: [
+        { type: "fix", subject: "change the escaping", body: "Keep the public output stable." },
+        { type: "feat", subject: "add an option" },
+      ],
+    }), "minor");
+    assert.equal(classifyImpact({
+      commits: [{ header: "fix: change behavior", footer: "BREAKING CHANGE: migrate the setting" }],
+    }), "major");
+    assert.equal(classifyImpact({ messages: [
+      { header: "fix: bug" },
+      { subject: "not a conventional commit" },
+    ] }), "unknown");
+  });
+
   it("maps impact to the next version", () => {
     assert.equal(computeNextVersion("0.1.0", "patch"), "0.1.1");
     assert.equal(computeNextVersion("0.1.0", "minor"), "0.2.0");
@@ -162,6 +184,30 @@ describe("release notes and metadata", () => {
       const rootDirectory = createFixture({ releaseNotes });
       assert.throws(() => validateRelease({ rootDirectory, expectedVersion: "0.1.0" }), error);
     }
+  });
+
+  it("rejects whitespace-only, generic, and unsafe authored note content consistently", () => {
+    const note = (rationale, summary = "A concrete change.") => `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch\nRationale: ${rationale}\n\n## Summary\n\n${summary}\n\n## User-visible changes\n\n- A concrete change.\n`;
+    for (const rationale of ["   ", "\t", "- update", "Because."]) {
+      assert.throws(
+        () => validateRelease({ rootDirectory: createFixture({ releaseNotes: note(rationale) }) }),
+        /Rationale.*concrete, safe authored text/,
+      );
+    }
+    assert.throws(
+      () => validateRelease({ rootDirectory: createFixture({ releaseNotes: note("A concrete reason.", "- update") }) }),
+      /## Summary.*concrete, safe authored text/,
+    );
+    assert.throws(
+      () => validateRelease({ rootDirectory: createFixture({
+        releaseNotes: `${note("A concrete reason.")}\n## Added\n\nnone\n`,
+      }) }),
+      /## Added.*concrete, safe authored text/,
+    );
+    assert.throws(
+      () => validateRelease({ rootDirectory: createFixture({ releaseNotes: note("A concrete\u0000reason.") }) }),
+      /Rationale.*concrete, safe authored text/,
+    );
   });
 
   it("requires breaking changes and migration sections for major notes", () => {
@@ -262,8 +308,12 @@ describe("GitHub Actions release workflow", () => {
     assert.doesNotMatch(workflow, /--generate-notes/);
     assert.match(workflow, /Verify published tag, body, assets, and checksums/);
     assert.match(workflow, /git ls-remote origin/);
+    assert.match(workflow, /remote_tag_target/);
+    assert.match(workflow, /peeled_ref/);
     assert.match(workflow, /isDraft/);
     assert.match(workflow, /isPrerelease/);
+    assert.match(workflow, /publishedAt/);
+    assert.match(workflow, /gh release download/);
     assert.match(workflow, /sha256sum -c/);
     assert.match(workflow, /release_assets=\(main\.js manifest\.json \"\$ZIP_PATH\"\)/);
     assert.match(workflow, /expected_entries=\(main\.js manifest\.json\)/);
