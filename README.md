@@ -49,9 +49,9 @@ tag, push, create a GitHub Release, or upload assets. Before creating a bare
 run the validation commands documented in [docs/RELEASE.md](docs/RELEASE.md).
 GitHub Actions then publishes the authored notes body plus `main.js`,
 `manifest.json`, and the root-layout ZIP after the tag is pushed.
-Authored notes must include non-empty `Summary`, `Impact`, and `Rationale`
-sections; major releases additionally require `Breaking changes` and
-`Migration` sections.
+Authored notes must use exact `Date`, `Impact`, and `Rationale` fields plus
+non-empty `Summary` and `User-visible changes` sections; major releases
+additionally require `Breaking changes` and `Migration` sections.
 
 ## Format references
 

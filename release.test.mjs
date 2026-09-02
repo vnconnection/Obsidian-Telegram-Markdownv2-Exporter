@@ -31,7 +31,7 @@ function writeJson(path, value) {
 
 function createFixture({
   version = "0.1.0",
-  releaseNotes = `# Release ${version}\n\nDate: 2026-09-02\n\n## Summary\n\nCorrectly exports the current note to Telegram MarkdownV2.\n\n## Impact\n\npatch — this is backward-compatible.\n\n## Rationale\n\nThe intended export contract is corrected without migration.\n\n## Fixed\n\n- Correctly exports the current note to Telegram MarkdownV2.\n`,
+  releaseNotes = `# Release ${version}\n\nDate: 2026-09-02\nImpact: patch\nRationale: The intended export contract is corrected without migration.\n\n## Summary\n\nCorrectly exports the current note to Telegram MarkdownV2.\n\n## User-visible changes\n\n- Correctly exports the current note to Telegram MarkdownV2.\n`,
   missingAsset,
   emptyAsset,
   manifestOverrides = {},
@@ -152,10 +152,13 @@ describe("release notes and metadata", () => {
   it("rejects missing, mismatched, invalid, and placeholder notes", () => {
     const cases = [
       [null, /Release asset is missing or empty/],
-      ["# Release 0.1.1\n\nDate: 2026-09-02\n\n## Summary\n\nA concrete change.\n\n## Impact\n\npatch\n\n## Rationale\n\nBecause.\n", /heading/],
-      ["# Release 0.1.0\n\nDate: 2026-02-30\n\n## Summary\n\nA concrete change.\n\n## Impact\n\npatch\n\n## Rationale\n\nBecause.\n", /date/],
-      ["# Release 0.1.0\n\nDate: 2026-09-02\n\n## Summary\n\nupdate\n\n## Impact\n\npatch\n\n## Rationale\n\nBecause.\n", /non-empty|concrete change/],
-      ["# Release 0.1.0\n\nDate: 2026-09-02\n\n## Summary\n\nA concrete change.\n\n## Rationale\n\nBecause.\n", /Impact/],
+      ["# Release 0.1.1\n\nDate: 2026-09-02\nImpact: patch\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /heading/],
+      ["# Release 0.1.0\n\nDate: 2026-02-30\nImpact: patch\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /date/],
+      ["# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch\nRationale: Because.\n\n## Summary\n\nupdate\n\n## User-visible changes\n\n- A concrete change.\n", /non-empty|concrete change/],
+      ["# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch — backward-compatible\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /exact Date, Impact:, and Rationale:/],
+      ["# Release 0.1.0\n\nDate: 2026-09-02\nImpact: none\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /Impact/],
+      ["# Release 0.1.0\n\nDate: 2026-09-02\nImpact: unknown\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /Impact/],
+      ["# Release 0.1.0\n\nDate: 2026-09-02\n\n## Summary\n\nA concrete change.\n\n## Impact\n\npatch\n\n## Rationale\n\nBecause.\n\n## User-visible changes\n\n- A concrete change.\n", /exact Date, Impact, and Rationale|Impact/],
     ];
     for (const [releaseNotes, error] of cases) {
       const rootDirectory = createFixture({ releaseNotes });
@@ -164,7 +167,7 @@ describe("release notes and metadata", () => {
   });
 
   it("requires breaking changes and migration sections for major notes", () => {
-    const majorNotes = `# Release 0.1.0\n\nDate: 2026-09-02\n\n## Summary\n\nA breaking export change.\n\n## Impact\n\nmajor\n\n## Rationale\n\nThe public contract changes.\n`;
+    const majorNotes = `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: major\nRationale: The public contract changes.\n\n## Summary\n\nA breaking export change.\n\n## User-visible changes\n\n- Existing exports use a new contract.\n`;
     assert.throws(() => validateRelease({ rootDirectory: createFixture({ releaseNotes: majorNotes }) }), /Breaking Changes/);
     assert.throws(() => validateRelease({ rootDirectory: createFixture({
       releaseNotes: `${majorNotes}\n## Breaking changes\n\n- Rename the setting.\n`,
@@ -234,8 +237,8 @@ describe("release assets and publication boundary", () => {
 describe("GitHub Actions release workflow", () => {
   it("uses bare semver tags, npm gates, authored notes, and the asset contract", () => {
     const workflow = readFileSync(new URL("./.github/workflows/release.yml", import.meta.url), "utf8");
-    assert.match(workflow, /- "0\.\[0-9\]\+\.\[0-9\]\+"/);
-    assert.match(workflow, /- "\[1-9\]\+\.\[0-9\]\+\.\[0-9\]\+"/);
+    assert.match(workflow, /- "0\.\[0-9\]\*\.\[0-9\]\*"/);
+    assert.match(workflow, /- "\[1-9\]\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*"/);
     assert.match(workflow, /npm ci/);
     assert.match(workflow, /npm run typecheck/);
     assert.match(workflow, /npm test/);
@@ -246,6 +249,8 @@ describe("GitHub Actions release workflow", () => {
     assert.doesNotMatch(workflow, /--generate-notes/);
     assert.match(workflow, /Verify published tag, body, assets, and checksums/);
     assert.match(workflow, /git ls-remote origin/);
+    assert.match(workflow, /isDraft/);
+    assert.match(workflow, /isPrerelease/);
     assert.match(workflow, /sha256sum -c/);
     assert.match(workflow, /release_assets=\(main\.js manifest\.json \"\$ZIP_PATH\"\)/);
     assert.match(workflow, /expected_entries=\(main\.js manifest\.json\)/);

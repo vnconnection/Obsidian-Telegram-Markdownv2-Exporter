@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "0.[0-9]+.[0-9]+"
-      - "[1-9]+.[0-9]+.[0-9]+"
+      - "0.[0-9]*.[0-9]*"
+      - "[1-9][0-9]*.[0-9]*.[0-9]*"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -108,6 +108,11 @@ jobs:
           remote_refs="$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" "refs/tags/$GITHUB_REF_NAME^{}" || true)"
           remote_commit="$(printf '%s\n' "$remote_refs" | awk '$2 == "refs/tags/'"$GITHUB_REF_NAME"'^{}" { print $1 } $2 == "refs/tags/'"$GITHUB_REF_NAME"'" { print $1 }' | tail -n 1)"
           test "$remote_commit" = "$expected_commit"
+
+          release_status="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName)"
+          test "$(jq -r '.tagName' <<<"$release_status")" = "$GITHUB_REF_NAME"
+          test "$(jq -r '.isDraft' <<<"$release_status")" = "false"
+          test "$(jq -r '.isPrerelease' <<<"$release_status")" = "false"
 
           verify_directory="$(mktemp -d)"
           trap 'rm -rf "$verify_directory"' EXIT

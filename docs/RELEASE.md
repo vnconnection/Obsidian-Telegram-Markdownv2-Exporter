@@ -27,18 +27,16 @@ sections:
 # Release X.Y.Z
 
 Date: YYYY-MM-DD
+Impact: patch
+Rationale: Explain why this impact classification and version bump are correct.
 
 ## Summary
 
 One or two sentences describing the user-visible result.
 
-## Impact
+## User-visible changes
 
-`patch` — state the backward-compatible user impact.
-
-## Rationale
-
-Explain why this impact classification and version bump are correct.
+- A concrete user-visible change.
 
 ## Added
 
@@ -54,7 +52,7 @@ Explain why this impact classification and version bump are correct.
 
 ## Breaking changes
 
-- Required for a breaking release, with migration instructions.
+- Required for a major release, with migration instructions.
 
 ## Migration
 

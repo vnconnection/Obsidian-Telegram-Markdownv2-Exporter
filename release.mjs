@@ -43,35 +43,54 @@ function releaseNotes(rootDirectory, version) {
   assertNonEmptyFile(notesPath);
   const notes = readFileSync(notesPath, "utf8");
   const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (!new RegExp(`^# Release ${escaped}\\s*$`, "m").test(notes)) {
+  if (!new RegExp(`^# Release ${escaped}\\r?\\n`, "m").test(notes)) {
     throw new Error(`Release notes heading must be # Release ${version}`);
   }
-  const date = notes.match(/^Date: (\d{4}-\d{2}-\d{2})\s*$/m)?.[1];
+  const preamble = notes.match(
+    new RegExp(
+      `^# Release ${escaped}\\r?\\n\\r?\\nDate: (\\d{4}-\\d{2}-\\d{2})\\r?\\nImpact: (major|minor|patch|none|unknown)\\r?\\nRationale: ([^\\r\\n]+)(?:\\r?\\n|$)`,
+      "m",
+    ),
+  );
+  if (!preamble) {
+    throw new Error(`Release notes must contain exact Date, Impact:, and Rationale: fields: ${notesPath}`);
+  }
+  const [, date, impact, rationale] = preamble;
   const parsedDate = date ? new Date(`${date}T00:00:00Z`) : null;
   if (!date || !parsedDate || Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== date) {
     throw new Error(`Release notes date is missing or invalid: ${notesPath}`);
   }
+  if (/^(?:update|todo|tbd|n\/a|none)\.?$/i.test(rationale.trim())) {
+    throw new Error(`Release notes Rationale must contain a concrete explanation: ${notesPath}`);
+  }
+  if (impact === "none" || impact === "unknown") {
+    throw new Error(`Release notes Impact must be major, minor, or patch for a release: ${notesPath}`);
+  }
+
   const sections = new Map();
   const sectionHeadings = [...notes.matchAll(/^##[ \t]+(.+?)[ \t]*$/gm)];
   for (let index = 0; index < sectionHeadings.length; index += 1) {
     const heading = sectionHeadings[index];
     const title = heading[1].trim().toLowerCase();
+    if (sections.has(title)) {
+      throw new Error(`Release notes contain duplicate ## ${heading[1].trim()} sections: ${notesPath}`);
+    }
     const contentStart = heading.index + heading[0].length;
     const contentEnd = sectionHeadings[index + 1]?.index ?? notes.length;
     sections.set(title, notes.slice(contentStart, contentEnd).trim());
   }
 
-  const requiredSections = ["summary", "impact", "rationale"];
+  if (sections.has("impact") || sections.has("rationale")) {
+    throw new Error(`Release notes must use Impact: and Rationale: fields, not ## sections: ${notesPath}`);
+  }
+
+  const requiredSections = ["summary", "user-visible changes"];
   for (const title of requiredSections) {
     const content = sections.get(title);
     if (!content || /^(?:[-*][ \t]*)?(?:update|todo|tbd|n\/a|none)\.?$/i.test(content)) {
-      throw new Error(`Release notes must contain a non-empty ## ${title[0].toUpperCase()}${title.slice(1)} section: ${notesPath}`);
+      throw new Error(`Release notes must contain a non-empty ## ${title}: ${notesPath}`);
     }
   }
-  if (!/\b(?:major|minor|patch|none|unknown)\b/i.test(sections.get("impact"))) {
-    throw new Error(`Release notes Impact must name one of major, minor, patch, none, or unknown: ${notesPath}`);
-  }
-  const impact = sections.get("impact").match(/\b(major|minor|patch|none|unknown)\b/i)?.[1].toLowerCase();
   if (impact === "major") {
     for (const title of ["breaking changes", "migration"]) {
       const content = sections.get(title);
@@ -79,9 +98,6 @@ function releaseNotes(rootDirectory, version) {
         throw new Error(`Major release notes must contain a non-empty ## ${title.replace(/\b\w/g, (letter) => letter.toUpperCase())} section: ${notesPath}`);
       }
     }
-  }
-  if (/^(?:update|todo|tbd|n\/a|user-visible change\.?)$/i.test(sections.get("summary"))) {
-    throw new Error(`Release notes must contain a concrete change: ${notesPath}`);
   }
   return { notesPath, notes, impact };
 }
@@ -141,10 +157,6 @@ function signalFor(message) {
   const lines = message.split(/\r?\n/);
   const subject = lines[0].trim();
   const header = subject.match(/^([a-z]+)(?:\(([^()\r\n]+)\))?(!)?:\s+\S.*$/);
-  const footerStart = lines.findIndex((line, index) => index > 0 && line.trim() === "");
-  const footerLines = footerStart === -1 ? [] : lines.slice(footerStart + 1);
-  const hasBreakingFooter = footerLines.some((line) => /^\s*BREAKING(?:[ -])CHANGE\s*:/i.test(line));
-  if (hasBreakingFooter) return "major";
   if (!header) return null;
 
   const [, type, , breakingMarker] = header;
@@ -161,6 +173,14 @@ function signalFor(message) {
     style: "none",
   };
   if (!Object.hasOwn(types, type)) return null;
+
+  const footerStart = lines.findIndex((line, index) => index > 0 && line.trim() === "");
+  const footerLines = footerStart === -1 ? [] : lines.slice(footerStart + 1);
+  const hasBreakingFooter = footerLines.some((line) => /^\s*BREAKING(?: CHANGE|-CHANGE):\s+\S.*$/i.test(line));
+  if (hasBreakingFooter) return "major";
+  const hasMalformedBreakingFooter = footerLines.some((line) => /^\s*BREAKING(?:[ -]+CHANGE)S?\b/i.test(line));
+  if (hasMalformedBreakingFooter) return null;
+
   if (breakingMarker) return "major";
   return types[type];
 }
@@ -250,7 +270,7 @@ export function runCli(args = process.argv.slice(2)) {
       messages = gitOutput(["log", "--format=%B%x00", "HEAD"]).split("\u0000").filter(Boolean);
     }
     const result = classifyImpact(messages);
-    console.log(`Advisory release impact: ${result.impact}`);
+    console.log(result.impact);
     return result;
   }
   if (command === "prepare") {
