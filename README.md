@@ -20,6 +20,7 @@ Unsupported visual semantics such as highlights and arbitrary HTML are flattened
 ```bash
 npm install
 npm run check
+node --test release.test.mjs
 ```
 
 `npm run build` produces the BRAT asset `main.js`.
@@ -28,13 +29,26 @@ npm run check
 
 Install [BRAT](https://github.com/TfTHacker/obsidian42-brat), choose `BRAT: Add a beta plugin for testing`, and enter `ssfxate/telegram-markdownv2-exporter`. BRAT installs `main.js`, `manifest.json`, and the matching tagged GitHub Release.
 
-The release flow is:
+This plugin has no `styles.css` build output, so BRAT releases require only
+non-empty `main.js` and `manifest.json`; the optional ZIP contains those two
+files at its root.
+
+The local release flow is:
 
 ```bash
+npm run release:classify
 npm run release:patch
+# or npm run release:minor / npm run release:major
+npm run release:validate -- <X.Y.Z>
+npm run release:package -- <X.Y.Z> artifacts/telegram-markdownv2-exporter-<X.Y.Z>.zip
 ```
 
-Before publishing, the release script expects the repository to be authenticated to the personal `ssfxate` GitHub account and publishes `main.js` and `manifest.json` as release assets.
+Preparation updates local version metadata only. It does not commit, create a
+tag, push, create a GitHub Release, or upload assets. Before creating a bare
+`X.Y.Z` tag, add the matching authored notes at `docs/releases/<X.Y.Z>.md` and
+run the validation commands documented in [docs/RELEASE.md](docs/RELEASE.md).
+GitHub Actions then publishes the authored notes body plus `main.js`,
+`manifest.json`, and the root-layout ZIP after the tag is pushed.
 
 ## Format references
 

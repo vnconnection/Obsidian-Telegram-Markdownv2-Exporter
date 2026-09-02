@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "0.[0-9]*.[0-9]*"
+      - "[1-9]*.[0-9]*.[0-9]*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Validate bare semver tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" != "tag" || ! "$GITHUB_REF_NAME" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Release must run only for an exact bare X.Y.Z tag; received: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Test release contract
+        run: node --test release.test.mjs
+
+      - name: Production build
+        run: npm run build
+
+      - name: Validate release assets and metadata
+        run: npm run release:validate -- "$GITHUB_REF_NAME"
+
+      - name: Package BRAT ZIP
+        shell: bash
+        env:
+          ZIP_PATH: artifacts/telegram-markdownv2-exporter-${{ github.ref_name }}.zip
+        run: |
+          set -euo pipefail
+          npm run release:package -- "$GITHUB_REF_NAME" "$ZIP_PATH"
+          test -s "$ZIP_PATH"
+          mapfile -t zip_entries < <(unzip -Z1 "$ZIP_PATH")
+          expected_entries=(main.js manifest.json)
+          if [[ "${#zip_entries[@]}" -ne "${#expected_entries[@]}" ]] || [[ "${zip_entries[*]}" != "${expected_entries[*]}" ]]; then
+            printf 'Unexpected ZIP root layout:\n%s\n' "${zip_entries[*]}" >&2
+            exit 1
+          fi
+
+      - name: Create or update GitHub Release with authored notes
+        shell: bash
+        env:
+          ZIP_PATH: artifacts/telegram-markdownv2-exporter-${{ github.ref_name }}.zip
+          RELEASE_NOTES_PATH: docs/releases/${{ github.ref_name }}.md
+        run: |
+          set -euo pipefail
+          test -s "$RELEASE_NOTES_PATH"
+          release_assets=(main.js manifest.json "$ZIP_PATH")
+
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${release_assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --notes-file "$RELEASE_NOTES_PATH" \
+              --title "$GITHUB_REF_NAME"
+          else
+            gh release create "$GITHUB_REF_NAME" "${release_assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --notes-file "$RELEASE_NOTES_PATH" \
+              --title "$GITHUB_REF_NAME"
+          fi
