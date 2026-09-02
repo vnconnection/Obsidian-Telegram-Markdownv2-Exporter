@@ -10,6 +10,7 @@ import {
   computeNextVersion,
   packageRelease,
   prepareRelease,
+  runCli,
   syncMetadata,
   validateRelease,
 } from "./release.mjs";
@@ -124,6 +125,33 @@ describe("release impact classification", () => {
     assert.equal(classifyImpact(["not a conventional commit\n\nBREAKING CHANGE: ignored"]), "unknown");
   });
 
+  it("treats empty or ambiguous breaking footers as unknown", () => {
+    for (const footer of [
+      "BREAKING CHANGE:",
+      "BREAKING CHANGE: ???",
+      "BREAKING CHANGE: unknown",
+      "BREAKING CHANGES: migrate the setting",
+      "BREAKING CHANGE migrate the setting",
+    ]) {
+      assert.equal(classifyImpact([`fix: change behavior\n\n${footer}`]), "unknown");
+    }
+    assert.equal(classifyImpact(["docs: clarify usage\n\nBREAKING CHANGE: migrate the setting"]), "major");
+  });
+
+  it("honors supplied release:classify input with the normal parser", () => {
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+      assert.equal(runCli(["classify", JSON.stringify({
+        messages: [{ type: "fix", subject: "change behavior", footer: "BREAKING CHANGE: migrate the setting" }],
+      })]), "major");
+      assert.equal(runCli(["classify", ""]), "unknown");
+      assert.equal(runCli(["classify", "feat: add an option", "not a conventional commit"]), "unknown");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   it("returns unknown for malformed nonempty messages and mixed unknown blocks", () => {
     assert.equal(classifyImpact(["not a conventional commit"]), "unknown");
     assert.equal(classifyImpact(["fix: bug", "not a conventional commit"]), "unknown");
@@ -221,6 +249,18 @@ describe("release notes and metadata", () => {
     }) }));
   });
 
+  it("rejects non-canonical section headings and ordering", () => {
+    const note = (sections) => `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch\nRationale: A concrete release reason.\n\n${sections}\n`;
+    for (const sections of [
+      "## Summary \n\nA concrete summary.\n\n## User-visible changes\n\nA concrete change.",
+      "##Summary\n\nA concrete summary.\n\n## User-visible changes\n\nA concrete change.",
+      "## User-visible changes\n\nA concrete change.\n\n## Summary\n\nA concrete summary.",
+      "## Summary\nA concrete summary.\n\n## User-visible changes\n\nA concrete change.",
+    ]) {
+      assert.throws(() => validateRelease({ rootDirectory: createFixture({ releaseNotes: note(sections) }) }), /canonical|unknown section|blank line/);
+    }
+  });
+
   it("synchronizes package, lockfile, manifest, and versions metadata", () => {
     const rootDirectory = createFixture();
     syncMetadata({ rootDirectory, version: "0.1.1" });
@@ -306,10 +346,17 @@ describe("GitHub Actions release workflow", () => {
     assert.match(workflow, /npm run release:validate -- \"\$GITHUB_REF_NAME\"/);
     assert.match(workflow, /--notes-file \"\$RELEASE_NOTES_PATH\"/);
     assert.doesNotMatch(workflow, /--generate-notes/);
+    assert.match(workflow, /--json body --template '\{\{\.body\}\}' > \"\$verify_directory\/release-body\.md\"/);
+    assert.doesNotMatch(workflow, /--json body --jq/);
+    assert.match(workflow, /cmp -s \"\$RELEASE_NOTES_PATH\" \"\$verify_directory\/release-body\.md\"/);
+    assert.match(workflow, /gh release edit[\s\S]*?--draft=false \\\n\s+--prerelease=false/);
+    assert.match(workflow, /gh release create[\s\S]*?--draft=false \\\n\s+--prerelease=false/);
     assert.match(workflow, /Verify published tag, body, assets, and checksums/);
     assert.match(workflow, /git ls-remote origin/);
     assert.match(workflow, /remote_tag_target/);
     assert.match(workflow, /peeled_ref/);
+    assert.match(workflow, /expected_commit=\"\$\(git rev-parse HEAD\)\"/);
+    assert.match(workflow, /test \"\$remote_tag_target\" = \"\$expected_commit\"/);
     assert.match(workflow, /isDraft/);
     assert.match(workflow, /isPrerelease/);
     assert.match(workflow, /publishedAt/);

@@ -30,8 +30,22 @@ const RELEASE_NOTE_SECTIONS = new Set([
   "Migration",
   "Documentation",
 ]);
+const RELEASE_NOTE_SECTION_ORDER = [
+  "Summary",
+  "User-visible changes",
+  "Added",
+  "Changed",
+  "Fixed",
+  "Breaking changes",
+  "Migration",
+  "Documentation",
+];
+const RELEASE_NOTE_SECTION_PATTERN = /^## (Summary|User-visible changes|Added|Changed|Fixed|Breaking changes|Migration|Documentation)$/;
 const GENERIC_AUTHORED_NOTE_PATTERN = /^(?:because|changes?|generic|misc(?:ellaneous)?|n\/a|na|none|no changes?|not applicable|pending|placeholder|release(?: notes?)?|same as above|see above|tbd|todo|update(?:d|s)?|various|wip)\.?$/i;
 const UNSAFE_AUTHORED_NOTE_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+const BREAKING_FOOTER_PREFIX_PATTERN = /^\s*BREAKING(?:[ \t]+CHANGE(?:S)?|-CHANGE(?:S)?)(?=[ \t:]|$)/i;
+const BREAKING_FOOTER_PATTERN = /^\s*BREAKING(?: CHANGE|-CHANGE):[ \t]+(\S.*?)[ \t]*$/i;
+const AMBIGUOUS_BREAKING_FOOTER_PATTERN = /^(?:because|change(?:s)?|generic|misc(?:ellaneous)?|n\/a|na|none|no changes?|not applicable|pending|placeholder|same as above|see above|tbd|todo|unknown|ambiguous|update(?:d|s)?|various|wip)\.?$/i;
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const writeJson = (path, value) =>
@@ -96,20 +110,29 @@ function releaseNotes(rootDirectory, version) {
   const sectionHeadings = [...notes.matchAll(/^##[^\r\n]*$/gm)];
   const preambleEnd = preamble.index + preamble[0].length;
   const firstSectionIndex = sectionHeadings[0]?.index ?? notes.length;
-  if (notes.slice(preambleEnd, firstSectionIndex).trim()) {
-    throw new Error(`Release notes contain text outside a recognized section: ${notesPath}`);
+  if (notes.slice(preambleEnd, firstSectionIndex) !== (notes.includes("\r\n") ? "\r\n" : "\n")) {
+    throw new Error(`Release notes must use the canonical blank line before sections: ${notesPath}`);
   }
+  let previousSectionIndex = -1;
   for (let index = 0; index < sectionHeadings.length; index += 1) {
     const heading = sectionHeadings[index];
-    const title = heading[0].match(/^##[ \t]+(.+?)[ \t]*$/)?.[1];
+    const title = heading[0].match(RELEASE_NOTE_SECTION_PATTERN)?.[1];
     if (!title || !RELEASE_NOTE_SECTIONS.has(title)) {
       throw new Error(`Release notes contain an unknown section: ${heading[0].trim()}: ${notesPath}`);
     }
+    const sectionOrderIndex = RELEASE_NOTE_SECTION_ORDER.indexOf(title);
+    if (sectionOrderIndex <= previousSectionIndex) {
+      throw new Error(`Release notes sections must follow the canonical order: ${notesPath}`);
+    }
+    previousSectionIndex = sectionOrderIndex;
     if (sections.has(title)) {
       throw new Error(`Release notes contain duplicate ## ${title} sections: ${notesPath}`);
     }
     const contentStart = heading.index + heading[0].length;
     const contentEnd = sectionHeadings[index + 1]?.index ?? notes.length;
+    if (!/^\r?\n\r?\n/.test(notes.slice(contentStart))) {
+      throw new Error(`Release notes section ## ${title} must be followed by a blank line: ${notesPath}`);
+    }
     const content = notes.slice(contentStart, contentEnd).trim();
     assertConcreteAuthoredNote(content, `## ${title}`, notesPath);
     sections.set(title, content);
@@ -200,9 +223,27 @@ export function computeNextVersion(currentVersion, impact) {
   return `${major}.${minor}.${patch + 1}`;
 }
 
+function breakingFooterSignal(lines) {
+  const firstBlankLine = lines.findIndex((line, index) => index > 0 && line.trim() === "");
+  const candidateLines = lines.slice(firstBlankLine === -1 ? 1 : firstBlankLine + 1)
+    .filter((line) => BREAKING_FOOTER_PREFIX_PATTERN.test(line));
+  if (candidateLines.length === 0) return null;
+  if (firstBlankLine === -1 || candidateLines.length !== 1) return "unknown";
+
+  const match = candidateLines[0].match(BREAKING_FOOTER_PATTERN);
+  const description = match?.[1]?.trim();
+  if (
+    !description ||
+    !/[\p{L}\p{N}]/u.test(description) ||
+    AMBIGUOUS_BREAKING_FOOTER_PATTERN.test(description)
+  ) return "unknown";
+  return "major";
+}
+
 function signalFor(message) {
   const lines = message.split(/\r?\n/);
   const subject = lines[0].trim();
+  const breakingFooter = breakingFooterSignal(lines);
   const header = subject.match(/^([a-z]+)(?:\(([^()\r\n]+)\))?(!)?:\s+\S.*$/);
   if (!header) return null;
 
@@ -222,12 +263,8 @@ function signalFor(message) {
   };
   if (!Object.hasOwn(types, type)) return null;
 
-  const footerStart = lines.findIndex((line, index) => index > 0 && line.trim() === "");
-  const footerLines = footerStart === -1 ? [] : lines.slice(footerStart + 1);
-  const hasBreakingFooter = footerLines.some((line) => /^\s*BREAKING(?: CHANGE|-CHANGE):\s+\S.*$/i.test(line));
-  if (hasBreakingFooter) return "major";
-  const hasMalformedBreakingFooter = footerLines.some((line) => /^\s*BREAKING(?:[ -]+CHANGE)S?\b/i.test(line));
-  if (hasMalformedBreakingFooter) return null;
+  if (breakingFooter === "major") return "major";
+  if (breakingFooter === "unknown") return null;
 
   if (breakingMarker) return "major";
   return types[type];
@@ -293,6 +330,14 @@ function commitInputs(input) {
   return [input];
 }
 
+function parseSuppliedClassifyInput(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 export function classifyImpact(input = []) {
   const messages = commitInputs(input);
   if (!Array.isArray(messages) || messages.length === 0) return "unknown";
@@ -346,26 +391,42 @@ export function prepareRelease({ rootDirectory = process.cwd(), impact } = {}) {
 
 function cliArgs(args) {
   let impact;
+  let suppliedInput;
   const positional = [];
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--") continue;
     if (args[index] === "--impact") impact = args[++index];
     else if (args[index].startsWith("--impact=")) impact = args[index].slice(9);
+    else if (args[index] === "--input") suppliedInput = args[++index];
     else if (args[index].startsWith("--")) throw new Error(`Unknown release option: ${args[index]}`);
     else positional.push(args[index]);
   }
-  return { command: positional[0] ?? "validate", version: positional[1], outputPath: positional[2], impact };
+  return {
+    command: positional[0] ?? "validate",
+    version: positional[1],
+    outputPath: positional[2],
+    impact,
+    suppliedInput,
+    positionalInput: positional.slice(1),
+  };
 }
 
 export function runCli(args = process.argv.slice(2)) {
-  const { command, version, outputPath, impact } = cliArgs(args);
+  const { command, version, outputPath, impact, suppliedInput, positionalInput } = cliArgs(args);
   if (command === "classify") {
     let messages = [];
-    try {
-      const tag = gitOutput(["describe", "--tags", "--abbrev=0"]);
-      messages = gitOutput(["log", "--format=%B%x00", `${tag}..HEAD`]).split("\u0000").filter(Boolean);
-    } catch {
-      messages = gitOutput(["log", "--format=%B%x00", "HEAD"]).split("\u0000").filter(Boolean);
+    const inputArguments = suppliedInput === undefined ? positionalInput : [suppliedInput];
+    if (inputArguments.length > 0) {
+      messages = inputArguments.length === 1
+        ? parseSuppliedClassifyInput(inputArguments[0])
+        : inputArguments.map(parseSuppliedClassifyInput);
+    } else {
+      try {
+        const tag = gitOutput(["describe", "--tags", "--abbrev=0"]);
+        messages = gitOutput(["log", "--format=%B%x00", `${tag}..HEAD`]).split("\u0000").filter(Boolean);
+      } catch {
+        messages = gitOutput(["log", "--format=%B%x00", "HEAD"]).split("\u0000").filter(Boolean);
+      }
     }
     const result = classifyImpact(messages);
     console.log(result);
