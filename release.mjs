@@ -14,11 +14,22 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 export const RELEASE_ASSETS = ["main.js", "manifest.json"];
+export const RELEASE_PACKAGE_NAME = "telegram-markdownv2-exporter";
 export const RELEASE_MANIFEST_ID = "telegram-markdownv2-exporter";
 export const RELEASE_NOTES_DIRECTORY = join("docs", "releases");
 export const RELEASE_IMPACTS = ["major", "minor", "patch", "none", "unknown"];
 export const SEMVER_TAG_PATTERN =
   /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+const RELEASE_NOTE_SECTIONS = new Set([
+  "Summary",
+  "User-visible changes",
+  "Added",
+  "Changed",
+  "Fixed",
+  "Breaking changes",
+  "Migration",
+  "Documentation",
+]);
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const writeJson = (path, value) =>
@@ -43,13 +54,9 @@ function releaseNotes(rootDirectory, version) {
   assertNonEmptyFile(notesPath);
   const notes = readFileSync(notesPath, "utf8");
   const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (!new RegExp(`^# Release ${escaped}\\r?\\n`, "m").test(notes)) {
-    throw new Error(`Release notes heading must be # Release ${version}`);
-  }
   const preamble = notes.match(
     new RegExp(
       `^# Release ${escaped}\\r?\\n\\r?\\nDate: (\\d{4}-\\d{2}-\\d{2})\\r?\\nImpact: (major|minor|patch|none|unknown)\\r?\\nRationale: ([^\\r\\n]+)(?:\\r?\\n|$)`,
-      "m",
     ),
   );
   if (!preamble) {
@@ -68,23 +75,27 @@ function releaseNotes(rootDirectory, version) {
   }
 
   const sections = new Map();
-  const sectionHeadings = [...notes.matchAll(/^##[ \t]+(.+?)[ \t]*$/gm)];
+  const sectionHeadings = [...notes.matchAll(/^##[^\r\n]*$/gm)];
+  const preambleEnd = preamble.index + preamble[0].length;
+  const firstSectionIndex = sectionHeadings[0]?.index ?? notes.length;
+  if (notes.slice(preambleEnd, firstSectionIndex).trim()) {
+    throw new Error(`Release notes contain text outside a recognized section: ${notesPath}`);
+  }
   for (let index = 0; index < sectionHeadings.length; index += 1) {
     const heading = sectionHeadings[index];
-    const title = heading[1].trim().toLowerCase();
+    const title = heading[0].match(/^##[ \t]+(.+?)[ \t]*$/)?.[1];
+    if (!title || !RELEASE_NOTE_SECTIONS.has(title)) {
+      throw new Error(`Release notes contain an unknown section: ${heading[0].trim()}: ${notesPath}`);
+    }
     if (sections.has(title)) {
-      throw new Error(`Release notes contain duplicate ## ${heading[1].trim()} sections: ${notesPath}`);
+      throw new Error(`Release notes contain duplicate ## ${title} sections: ${notesPath}`);
     }
     const contentStart = heading.index + heading[0].length;
     const contentEnd = sectionHeadings[index + 1]?.index ?? notes.length;
     sections.set(title, notes.slice(contentStart, contentEnd).trim());
   }
 
-  if (sections.has("impact") || sections.has("rationale")) {
-    throw new Error(`Release notes must use Impact: and Rationale: fields, not ## sections: ${notesPath}`);
-  }
-
-  const requiredSections = ["summary", "user-visible changes"];
+  const requiredSections = ["Summary", "User-visible changes"];
   for (const title of requiredSections) {
     const content = sections.get(title);
     if (!content || /^(?:[-*][ \t]*)?(?:update|todo|tbd|n\/a|none)\.?$/i.test(content)) {
@@ -92,10 +103,10 @@ function releaseNotes(rootDirectory, version) {
     }
   }
   if (impact === "major") {
-    for (const title of ["breaking changes", "migration"]) {
+    for (const title of ["Breaking changes", "Migration"]) {
       const content = sections.get(title);
       if (!content || /^(?:[-*][ \t]*)?(?:update|todo|tbd|n\/a|none)\.?$/i.test(content)) {
-        throw new Error(`Major release notes must contain a non-empty ## ${title.replace(/\b\w/g, (letter) => letter.toUpperCase())} section: ${notesPath}`);
+        throw new Error(`Major release notes must contain a non-empty ## ${title} section: ${notesPath}`);
       }
     }
   }
@@ -108,10 +119,18 @@ export function validateRelease({ rootDirectory = process.cwd(), expectedVersion
   const versions = readJson(join(rootDirectory, "versions.json"));
   const packageLock = readJson(join(rootDirectory, "package-lock.json"));
   const version = packageJson.version;
+  if (packageJson.name !== RELEASE_PACKAGE_NAME) {
+    throw new Error(`package.json name must be ${RELEASE_PACKAGE_NAME}`);
+  }
   assertBareSemver(version, "package.json version");
   if (manifest.id !== RELEASE_MANIFEST_ID) throw new Error(`manifest.json id must be ${RELEASE_MANIFEST_ID}`);
   if (manifest.version !== version) throw new Error(`manifest.json version (${manifest.version}) does not match package.json version (${version})`);
-  if (packageLock.version !== version || packageLock.packages?.[""]?.version !== version) {
+  if (
+    packageLock.name !== RELEASE_PACKAGE_NAME ||
+    packageLock.version !== version ||
+    packageLock.packages?.[""]?.name !== RELEASE_PACKAGE_NAME ||
+    packageLock.packages?.[""]?.version !== version
+  ) {
     throw new Error(`package-lock.json version does not match package.json version (${version})`);
   }
   if (typeof manifest.minAppVersion !== "string" || manifest.minAppVersion.trim().length === 0) {
@@ -138,6 +157,13 @@ export function packageRelease({ rootDirectory = process.cwd(), expectedVersion,
   try {
     execFileSync("zip", ["-q", "-j", temporaryArchive, ...RELEASE_ASSETS], { cwd: rootDirectory, stdio: "inherit" });
     renameSync(temporaryArchive, archivePath);
+    const entries = execFileSync("unzip", ["-Z1", archivePath], { encoding: "utf8" })
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean);
+    if (entries.length !== RELEASE_ASSETS.length || entries.some((entry, index) => entry !== RELEASE_ASSETS[index])) {
+      throw new Error(`Release ZIP must contain exactly ${RELEASE_ASSETS.join(", ")} at its root: ${archivePath}`);
+    }
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
   }
@@ -161,6 +187,7 @@ function signalFor(message) {
 
   const [, type, , breakingMarker] = header;
   const types = {
+    breaking: "major",
     feat: "minor",
     fix: "patch",
     perf: "patch",
@@ -190,23 +217,16 @@ export function classifyImpact(input = []) {
     ? input
     : typeof input === "string"
       ? [input]
-      : input.commitMessages ?? input.messages ?? [];
-  const classified = messages.map((message) => {
-    const normalizedMessage = String(message);
-    return { message: normalizedMessage, impact: signalFor(normalizedMessage) };
-  });
-  const signals = classified.filter((signal) => signal.impact);
-  const hasMalformedNonEmptyMessage = classified.some((signal) => signal.message.trim().length > 0 && !signal.impact);
-  const impact = hasMalformedNonEmptyMessage
-    ? "unknown"
-    : signals.some((signal) => signal.impact === "major")
-      ? "major"
-      : signals.some((signal) => signal.impact === "minor")
-        ? "minor"
-        : signals.some((signal) => signal.impact === "patch")
-          ? "patch"
-          : "none";
-  return { impact, signals };
+      : input && typeof input === "object"
+        ? input.commitMessages ?? input.messages ?? []
+        : [];
+  if (!Array.isArray(messages) || messages.length === 0) return "unknown";
+  const impacts = messages.map((message) => signalFor(String(message)));
+  if (impacts.some((impact) => impact === null)) return "unknown";
+  if (impacts.includes("major")) return "major";
+  if (impacts.includes("minor")) return "minor";
+  if (impacts.includes("patch")) return "patch";
+  return "none";
 }
 
 export function syncMetadata({ rootDirectory = process.cwd(), version }) {
@@ -270,7 +290,7 @@ export function runCli(args = process.argv.slice(2)) {
       messages = gitOutput(["log", "--format=%B%x00", "HEAD"]).split("\u0000").filter(Boolean);
     }
     const result = classifyImpact(messages);
-    console.log(result.impact);
+    console.log(result);
     return result;
   }
   if (command === "prepare") {

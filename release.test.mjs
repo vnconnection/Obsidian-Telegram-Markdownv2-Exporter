@@ -39,7 +39,7 @@ function createFixture({
 } = {}) {
   const rootDirectory = mkdtempSync(join(tmpdir(), "telegram-release-"));
   temporaryDirectories.push(rootDirectory);
-  writeJson(join(rootDirectory, "package.json"), { version });
+  writeJson(join(rootDirectory, "package.json"), { name: "telegram-markdownv2-exporter", version });
   writeJson(join(rootDirectory, "package-lock.json"), {
     name: "telegram-markdownv2-exporter",
     version,
@@ -91,16 +91,10 @@ afterEach(() => {
 
 describe("release impact classification", () => {
   it("classifies conventional commits", () => {
-    assert.deepEqual(classifyImpact([
+    assert.equal(classifyImpact([
       "docs: clarify usage",
       "fix: escape a Telegram delimiter",
-    ]), {
-      impact: "patch",
-      signals: [
-        { message: "docs: clarify usage", impact: "none" },
-        { message: "fix: escape a Telegram delimiter", impact: "patch" },
-      ],
-    });
+    ]), "patch");
   });
 
   it("classifies supported non-breaking types as none, patch, or minor", () => {
@@ -111,27 +105,31 @@ describe("release impact classification", () => {
       "build: update bundle",
       "refactor: preserve behavior",
       "style: format source",
-    ]).impact, "none");
-    assert.equal(classifyImpact(["feat: add an option"]).impact, "minor");
-    assert.equal(classifyImpact(["perf: reduce export overhead"]).impact, "patch");
+    ]), "none");
+    assert.equal(classifyImpact(["feat: add an option"]), "minor");
+    assert.equal(classifyImpact(["perf: reduce export overhead"]), "patch");
+    assert.equal(classifyImpact(["breaking: remove the old option"]), "major");
   });
 
   it("uses major over minor and patch, then minor over patch", () => {
-    assert.equal(classifyImpact(["fix: bug", "feat: option", "fix!: breaking bug"]).impact, "major");
-    assert.equal(classifyImpact(["fix: bug", "feat: option"]).impact, "minor");
+    assert.equal(classifyImpact(["fix: bug", "feat: option", "fix!: breaking bug"]), "major");
+    assert.equal(classifyImpact(["fix: bug", "feat: option"]), "minor");
   });
 
   it("recognizes both breaking footer spellings after a blank line", () => {
     for (const footer of ["BREAKING CHANGE: migrate the setting", "BREAKING-CHANGE: migrate the setting"]) {
-      assert.equal(classifyImpact([`fix: change behavior\n\n${footer}`]).impact, "major");
+      assert.equal(classifyImpact([`fix: change behavior\n\n${footer}`]), "major");
     }
-    assert.equal(classifyImpact(["feat!: change behavior"]).impact, "major");
+    assert.equal(classifyImpact(["feat!: change behavior"]), "major");
+    assert.equal(classifyImpact(["not a conventional commit\n\nBREAKING CHANGE: ignored"]), "unknown");
   });
 
   it("returns unknown for malformed nonempty messages and mixed unknown blocks", () => {
-    assert.equal(classifyImpact(["not a conventional commit"]).impact, "unknown");
-    assert.equal(classifyImpact(["fix: bug", "not a conventional commit"]).impact, "unknown");
-    assert.equal(classifyImpact([]).impact, "none");
+    assert.equal(classifyImpact(["not a conventional commit"]), "unknown");
+    assert.equal(classifyImpact(["fix: bug", "not a conventional commit"]), "unknown");
+    assert.equal(classifyImpact([]), "unknown");
+    assert.equal(classifyImpact(""), "unknown");
+    assert.equal(classifyImpact(null), "unknown");
   });
 
   it("maps impact to the next version", () => {
@@ -152,7 +150,7 @@ describe("release notes and metadata", () => {
   it("rejects missing, mismatched, invalid, and placeholder notes", () => {
     const cases = [
       [null, /Release asset is missing or empty/],
-      ["# Release 0.1.1\n\nDate: 2026-09-02\nImpact: patch\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /heading/],
+      ["# Release 0.1.1\n\nDate: 2026-09-02\nImpact: patch\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /exact Date, Impact:, and Rationale:/],
       ["# Release 0.1.0\n\nDate: 2026-02-30\nImpact: patch\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /date/],
       ["# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch\nRationale: Because.\n\n## Summary\n\nupdate\n\n## User-visible changes\n\n- A concrete change.\n", /non-empty|concrete change/],
       ["# Release 0.1.0\n\nDate: 2026-09-02\nImpact: patch — backward-compatible\nRationale: Because.\n\n## Summary\n\nA concrete change.\n\n## User-visible changes\n\n- A concrete change.\n", /exact Date, Impact:, and Rationale:/],
@@ -168,7 +166,7 @@ describe("release notes and metadata", () => {
 
   it("requires breaking changes and migration sections for major notes", () => {
     const majorNotes = `# Release 0.1.0\n\nDate: 2026-09-02\nImpact: major\nRationale: The public contract changes.\n\n## Summary\n\nA breaking export change.\n\n## User-visible changes\n\n- Existing exports use a new contract.\n`;
-    assert.throws(() => validateRelease({ rootDirectory: createFixture({ releaseNotes: majorNotes }) }), /Breaking Changes/);
+    assert.throws(() => validateRelease({ rootDirectory: createFixture({ releaseNotes: majorNotes }) }), /Breaking changes/);
     assert.throws(() => validateRelease({ rootDirectory: createFixture({
       releaseNotes: `${majorNotes}\n## Breaking changes\n\n- Rename the setting.\n`,
     }) }), /Migration/);
@@ -191,6 +189,21 @@ describe("release notes and metadata", () => {
   it("rejects a wrong manifest id or version-map entry", () => {
     assert.throws(() => validateRelease({ rootDirectory: createFixture({ manifestOverrides: { id: "wrong-id" } }) }), /manifest.json id/);
     assert.throws(() => validateRelease({ rootDirectory: createFixture({ versions: { "0.1.0": "1.6.0" } }) }), /versions.json must map/);
+  });
+
+  it("requires strict package metadata", () => {
+    const packageNameMismatch = createFixture();
+    writeJson(join(packageNameMismatch, "package.json"), { name: "other-plugin", version: "0.1.0" });
+    assert.throws(() => validateRelease({ rootDirectory: packageNameMismatch }), /package.json name/);
+
+    const lockNameMismatch = createFixture();
+    writeJson(join(lockNameMismatch, "package-lock.json"), {
+      name: "other-plugin",
+      version: "0.1.0",
+      lockfileVersion: 3,
+      packages: { "": { name: "other-plugin", version: "0.1.0" } },
+    });
+    assert.throws(() => validateRelease({ rootDirectory: lockNameMismatch }), /package-lock.json/);
   });
 });
 
