@@ -159,6 +159,7 @@ describe("release impact classification", () => {
       assert.equal(runCli(["classify", "--input", JSON.stringify([
         { type: "fix", subject: "change behavior", footer: "BREAKING CHANGE: migrate the setting" },
       ])]), "major");
+      assert.equal(runCli(["classify", JSON.stringify({ messages: "fix: bug" })]), "unknown");
       assert.equal(runCli(["classify", `--input=${JSON.stringify(["feat: add an option"])}`]), "minor");
       assert.equal(runCli(["classify", ""]), "unknown");
       assert.equal(runCli(["classify", "feat: add an option", "not a conventional commit"]), "unknown");
@@ -187,6 +188,14 @@ describe("release impact classification", () => {
       { commitMessages: [null] },
     ]) {
       assert.equal(classifyImpact(input), "unknown");
+    }
+  });
+
+  it("requires structured wrapper commit fields to be arrays", () => {
+    for (const key of ["messages", "commits", "commitMessages"]) {
+      assert.equal(classifyImpact({ [key]: "fix: bug" }), "unknown");
+      assert.equal(classifyImpact({ [key]: { header: "fix: bug" } }), "unknown");
+      assert.equal(classifyImpact({ [key]: ["fix: bug"] }), "patch");
     }
   });
 
@@ -223,6 +232,22 @@ describe("release impact classification", () => {
     ]) {
       assert.equal(computeNextVersion(currentVersion, impact), expectedVersion);
     }
+  });
+
+  it("bumps arbitrary-size semver components without Number precision loss", () => {
+    const currentVersion = "900719925474099312345678901234567890.900719925474099312345678901234567890.900719925474099312345678901234567890";
+    assert.equal(
+      computeNextVersion(currentVersion, "major"),
+      "900719925474099312345678901234567891.0.0",
+    );
+    assert.equal(
+      computeNextVersion(currentVersion, "minor"),
+      "900719925474099312345678901234567890.900719925474099312345678901234567891.0",
+    );
+    assert.equal(
+      computeNextVersion(currentVersion, "patch"),
+      "900719925474099312345678901234567890.900719925474099312345678901234567890.900719925474099312345678901234567891",
+    );
   });
 
   it("rejects non-canonical versions and unsupported impacts", () => {
@@ -400,6 +425,9 @@ describe("GitHub Actions release workflow", () => {
     assert.match(workflow, /npm run build/);
     assert.match(workflow, /Verify tracked bundle before build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
     assert.match(workflow, /Verify tracked bundle after build[\s\S]*?git ls-files --error-unmatch -- main\.js[\s\S]*?git diff --exit-code --no-ext-diff HEAD -- main\.js[\s\S]*?test -s main\.js/);
+    assert.equal((workflow.match(/git cat-file -e "HEAD:main\.js"/g) ?? []).length, 2);
+    assert.equal((workflow.match(/git hash-object -- main\.js/g) ?? []).length, 2);
+    assert.equal((workflow.match(/git rev-parse HEAD:main\.js/g) ?? []).length, 2);
     assert.match(workflow, /npm run release:validate -- \"\$GITHUB_REF_NAME\"/);
     assert.match(workflow, /--notes-file \"\$RELEASE_NOTES_PATH\"/);
     assert.doesNotMatch(workflow, /--generate-notes/);

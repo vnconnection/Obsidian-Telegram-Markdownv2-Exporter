@@ -58,6 +58,8 @@ jobs:
         run: |
           set -euo pipefail
           git ls-files --error-unmatch -- main.js >/dev/null
+          git cat-file -e "HEAD:main.js"
+          test "$(git hash-object -- main.js)" = "$(git rev-parse HEAD:main.js)"
           git diff --exit-code --no-ext-diff HEAD -- main.js
           test -s main.js
 
@@ -69,6 +71,8 @@ jobs:
         run: |
           set -euo pipefail
           git ls-files --error-unmatch -- main.js >/dev/null
+          git cat-file -e "HEAD:main.js"
+          test "$(git hash-object -- main.js)" = "$(git rev-parse HEAD:main.js)"
           git diff --exit-code --no-ext-diff HEAD -- main.js
           test -s main.js
 

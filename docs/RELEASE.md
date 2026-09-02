@@ -76,6 +76,12 @@ must use this order: `Summary`, `User-visible changes`, `Added`, `Changed`,
 do not apply. `Summary` and `User-visible changes` are always required, while
 `Breaking changes` and `Migration` are also required for a major release.
 
+The release classifier accepts a structured wrapper only when its
+`messages`, `commits`, or `commitMessages` field is an array. A string or any
+other value in one of those fields is malformed and returns `unknown`. Release
+version components are incremented as exact decimal integers, preserving
+arbitrarily large `X.Y.Z` components without `Number`-precision loss.
+
 ## Local commands
 
 From a clean branch, inspect the advisory impact and prepare metadata locally:
@@ -92,9 +98,10 @@ npm run release:patch
 With no `--input`, `release:classify` classifies commits since the latest
 version tag (or `HEAD` when no tag exists). `--input` accepts JSON for one
 message, an array of messages, or an object containing `messages`, `commits`,
-or `commitMessages`; invalid JSON is treated as one raw message. Empty or
-malformed structured input, or any unknown message among known messages,
-returns `unknown` because ambiguity takes precedence over a version bump.
+or `commitMessages`; those wrapper fields must be arrays. Invalid JSON is
+treated as one raw message. Empty or malformed structured input, or any unknown
+message among known messages, returns `unknown` because ambiguity takes
+precedence over a version bump.
 
 `release:prepare` requires an explicit impact and updates version metadata only;
 it does not commit, create a tag, push, create a GitHub Release, or upload

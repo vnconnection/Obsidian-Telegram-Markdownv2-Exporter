@@ -225,10 +225,10 @@ export function packageRelease({ rootDirectory = process.cwd(), expectedVersion,
 export function computeNextVersion(currentVersion, impact) {
   assertBareSemver(currentVersion, "Current version");
   if (!["patch", "minor", "major"].includes(impact)) throw new Error(`Impact must be patch, minor, or major: ${impact}`);
-  const [major, minor, patch] = currentVersion.split(".").map(Number);
-  if (impact === "major") return `${major + 1}.0.0`;
-  if (impact === "minor") return `${major}.${minor + 1}.0`;
-  return `${major}.${minor}.${patch + 1}`;
+  const [major, minor, patch] = currentVersion.split(".").map(BigInt);
+  if (impact === "major") return `${major + 1n}.0.0`;
+  if (impact === "minor") return `${major}.${minor + 1n}.0`;
+  return `${major}.${minor}.${patch + 1n}`;
 }
 
 function breakingFooterSignal(lines) {
@@ -330,9 +330,7 @@ function commitInputs(input) {
   for (const key of ["commitMessages", "messages", "commits"]) {
     if (Object.hasOwn(input, key)) {
       const value = input[key];
-      if (Array.isArray(value)) return value;
-      if (typeof value === "string" || (value && typeof value === "object")) return [value];
-      return [];
+      return Array.isArray(value) ? value : [];
     }
   }
   return [input];
