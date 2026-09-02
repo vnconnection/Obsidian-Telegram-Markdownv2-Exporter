@@ -76,11 +76,12 @@ must use this order: `Summary`, `User-visible changes`, `Added`, `Changed`,
 do not apply. `Summary` and `User-visible changes` are always required, while
 `Breaking changes` and `Migration` are also required for a major release.
 
-The release classifier accepts a structured wrapper only when its
+The release classifier accepts a structured wrapper only when each present
 `messages`, `commits`, or `commitMessages` field is an array. A string or any
-other value in one of those fields is malformed and returns `unknown`. Release
-version components are incremented as exact decimal integers, preserving
-arbitrarily large `X.Y.Z` components without `Number`-precision loss.
+other value in any of those fields is malformed and returns `unknown`; no
+present wrapper field is ignored. Release version components are incremented as
+exact decimal integers, preserving arbitrarily large `X.Y.Z` components without
+`Number`-precision loss.
 
 ## Local commands
 

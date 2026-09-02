@@ -199,6 +199,18 @@ describe("release impact classification", () => {
     }
   });
 
+  it("rejects any malformed wrapper field when another wrapper field is valid", () => {
+    for (const malformedKey of ["messages", "commits", "commitMessages"]) {
+      const input = {
+        messages: ["fix: bug"],
+        commits: ["fix: bug"],
+        commitMessages: ["fix: bug"],
+      };
+      input[malformedKey] = "fix: malformed wrapper";
+      assert.equal(classifyImpact(input), "unknown");
+    }
+  });
+
   it("classifies structured commit inputs with the same rules as text commits", () => {
     assert.equal(classifyImpact({
       commitMessages: [

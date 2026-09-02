@@ -327,11 +327,11 @@ function commitInputs(input) {
   if (Array.isArray(input)) return input;
   if (typeof input === "string") return [input];
   if (!input || typeof input !== "object") return [];
-  for (const key of ["commitMessages", "messages", "commits"]) {
-    if (Object.hasOwn(input, key)) {
-      const value = input[key];
-      return Array.isArray(value) ? value : [];
-    }
+  const wrapperKeys = ["commitMessages", "messages", "commits"];
+  const presentWrapperKeys = wrapperKeys.filter((key) => Object.hasOwn(input, key));
+  if (presentWrapperKeys.length > 0) {
+    if (presentWrapperKeys.some((key) => !Array.isArray(input[key]))) return [];
+    return input[presentWrapperKeys[0]];
   }
   return [input];
 }
